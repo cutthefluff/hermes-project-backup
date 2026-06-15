@@ -560,6 +560,39 @@ skills:
   # Set to 0 to disable.
   creation_nudge_interval: 15
 
+  # Per-skill model overrides. When a skill listed here is activated, Hermes
+  # auto-switches to the given model for that turn, then restores the previous
+  # model on the next turn. The value is exactly what you'd type after `/model`
+  # (a model alias plus an optional `--provider`). Failures are non-fatal: the
+  # skill still runs on the current model. See agent/skill_model_override.py.
+  # model_overrides:
+  #   red-teaming: "opus"
+  #   research-paper-writing: "opus --provider anthropic"
+  #   data-science: "gpt5 --provider openai"
+
+# =============================================================================
+# Model router — let Hermes pick its OWN model per request
+# =============================================================================
+# When enabled, a cheap auxiliary LLM (a free OpenRouter model by default)
+# classifies each request before the turn runs, and Hermes switches its own
+# model accordingly, restoring on a later turn:
+#   ROUTE   -> light tier: stay lightweight and delegate the work to a CLI.
+#   COMPLEX -> strong tier: do the deep reasoning itself (e.g. the Codex API).
+# Each tier value is exactly what you'd type after `/model` (alias + optional
+# --provider); "" means keep/restore the model you launched on. Subagents are
+# never re-routed. Off by default. See agent/model_router.py.
+model_router:
+  enabled: false
+  classifier:
+    provider: openrouter
+    model: "openrouter/auto"      # free auto-routing; or a "<model>:free" slug
+    timeout: 12
+  default_tier: light             # used if the classifier errors / abstains
+  tiers:
+    light: ""                     # "" = keep/restore base; set a free model to downgrade
+    complex: "gpt-5-codex --provider openai-codex"
+    # middle: "deepseek-chat --provider deepseek"   # future cheaper tier (not set up yet)
+
   # External skill directories — share skills across tools/agents without
   # copying them into ~/.hermes/skills/.  Each path is expanded (~ and ${VAR})
   # and resolved to an absolute path.  External dirs are read-only: skill
@@ -625,6 +658,14 @@ agent:
     uwu: "hewwo! i'm your fwiendwy assistant uwu~ i wiww twy my best to hewp you! *nuzzles your code* OwO what's this? wet me take a wook! i pwomise to be vewy hewpful >w<"
     philosopher: "Greetings, seeker of wisdom. I am an assistant who contemplates the deeper meaning behind every query. Let us examine not just the 'how' but the 'why' of your questions. Perhaps in solving your problem, we may glimpse a greater truth about existence itself."
     hype: "YOOO LET'S GOOOO!!! 🔥🔥🔥 I am SO PUMPED to help you today! Every question is AMAZING and we're gonna CRUSH IT together! This is gonna be LEGENDARY! ARE YOU READY?! LET'S DO THIS! 💪😤🚀"
+    # 'orchestrator' is a built-in persona that frames Hermes as the router
+    # between you and the CLI agents it can drive (claude-code, codex, opencode)
+    # plus delegate_task subagents. Activate it with `personality: orchestrator`
+    # (below) or `/personality orchestrator`. See the `cli-orchestrator` skill
+    # for the routing policy it follows.
+
+  # Active persona. Set to a key above (built-in or custom). Empty = default.
+  # personality: orchestrator
 
 # =============================================================================
 # Toolsets

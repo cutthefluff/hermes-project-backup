@@ -396,6 +396,24 @@ def run_conversation(
     Returns:
         Dict: Complete conversation result with final response and message history
     """
+    # ── Per-skill model override (auto-upgrade + restore) ──
+    # Before any turn setup, check whether this turn activates a skill that
+    # config maps to a stronger model (``skills.model_overrides``). If so swap
+    # to it (snapshotting the current model); otherwise restore a prior swap.
+    # Done before ``build_turn_context`` so the system prompt (which
+    # ``switch_model`` invalidates) is rebuilt for the active model. Fully
+    # exception-isolated — never breaks a turn. See ``agent/skill_model_override.py``.
+    try:
+        from agent.skill_model_override import on_turn_start as _skill_model_on_turn_start
+        _skill_model_on_turn_start(
+            agent,
+            user_message,
+            notice_fn=(None if getattr(agent, "quiet_mode", False)
+                       else getattr(agent, "_safe_print", None)),
+        )
+    except Exception:
+        pass
+
     # ── Per-turn setup (the prologue) ──
     # All once-per-turn setup — stdio guarding, retry-counter resets, user
     # message sanitization, todo/nudge hydration, system-prompt restore-or-

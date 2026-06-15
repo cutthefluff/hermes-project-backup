@@ -1728,6 +1728,16 @@ DEFAULT_CONFIG = {
     # always goes to ~/.hermes/skills/.
     "skills": {
         "external_dirs": [],   # e.g. ["~/.agents/skills", "/shared/team-skills"]
+        # Per-skill model overrides.  Map a skill name to the model the agent
+        # should switch to while that skill is active, then it restores the
+        # previous model on the next turn.  The value is exactly what you'd
+        # type after ``/model`` (alias + optional ``--provider``):
+        #   model_overrides:
+        #     red-teaming: "opus"
+        #     research-paper-writing: "opus --provider anthropic"
+        # Best-effort — a failed switch logs a warning and the skill still runs
+        # on the current model.  See ``agent/skill_model_override.py``.
+        "model_overrides": {},
         # Substitute ${HERMES_SKILL_DIR} and ${HERMES_SESSION_ID} in SKILL.md
         # content with the absolute skill directory and the active session id
         # before the agent sees it.  Lets skill authors reference bundled
@@ -1753,6 +1763,31 @@ DEFAULT_CONFIG = {
         # External hub installs (trusted/community sources) are always
         # scanned regardless of this setting.
         "guard_agent_created": False,
+    },
+
+    # Request-level model self-selection ("model router").
+    #
+    # When enabled, a cheap auxiliary LLM (a free OpenRouter model by default)
+    # classifies each incoming request before the turn runs and Hermes switches
+    # its OWN model accordingly, then restores on a later turn:
+    #   ROUTE   -> light tier: stay lightweight and delegate the work to a CLI.
+    #   COMPLEX -> strong tier: do the deep reasoning itself (e.g. Codex API).
+    # Each tier value is a `/model`-style string (alias + optional --provider);
+    # "" means keep / restore the base model.  Subagents are never re-routed.
+    # Off by default.  See agent/model_router.py.
+    "model_router": {
+        "enabled": False,
+        "classifier": {
+            "provider": "openrouter",
+            "model": "openrouter/auto",   # free routing; or a "<model>:free" slug
+            "timeout": 12,
+        },
+        "default_tier": "light",          # used if the classifier errors/abstains
+        "tiers": {
+            "light": "",                  # "" = keep / restore base model
+            "complex": "gpt-5-codex --provider openai-codex",
+            # "middle": "deepseek-... --provider ...",  # future cheaper tier
+        },
     },
 
     # Curator — background skill maintenance.
