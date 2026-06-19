@@ -633,6 +633,23 @@ def _build_gateway_agent_history(
     return agent_history, observed_context
 
 
+def _prepend_current_message_prefix(message: Any, prefix: str) -> Any:
+    """Prepend a text prefix to a plain or multimodal current user turn."""
+
+    if not prefix:
+        return message
+    if isinstance(message, str):
+        return f"{prefix}{message}"
+    if isinstance(message, list):
+        wrapped = [dict(part) if isinstance(part, dict) else part for part in message]
+        for part in wrapped:
+            if isinstance(part, dict) and part.get("type") == "text":
+                part["text"] = f"{prefix}{part.get('text', '')}"
+                return wrapped
+        return [{"type": "text", "text": prefix.rstrip()}] + wrapped
+    return message
+
+
 def _wrap_current_message_with_observed_context(message: Any, observed_context: Optional[str]) -> Any:
     """Prepend observed Telegram context to the API-only current user turn."""
 
@@ -644,19 +661,7 @@ def _wrap_current_message_with_observed_context(message: Any, observed_context: 
         f"{observed_context}\n\n"
         f"{_CURRENT_ADDRESSED_MESSAGE_HEADER}\n"
     )
-
-    if isinstance(message, str):
-        return f"{prefix}{message}"
-
-    if isinstance(message, list):
-        wrapped = [dict(part) if isinstance(part, dict) else part for part in message]
-        for part in wrapped:
-            if isinstance(part, dict) and part.get("type") == "text":
-                part["text"] = f"{prefix}{part.get('text', '')}"
-                return wrapped
-        return [{"type": "text", "text": prefix.rstrip()}] + wrapped
-
-    return message
+    return _prepend_current_message_prefix(message, prefix)
 
 
 def _last_transcript_timestamp(history: Optional[List[Dict[str, Any]]]) -> Any:
@@ -14380,6 +14385,39 @@ class GatewayRunner(GatewayKanbanWatchersMixin, GatewaySlashCommandsMixin):
                     _run_message,
                     observed_group_context,
                 )
+                try:
+                    from agent.model_metadata import estimate_messages_tokens_rough
+                    from gateway.runtime_footer import build_context_handoff_notice
+
+                    _ctx_len = getattr(
+                        getattr(agent, "context_compressor", None),
+                        "context_length",
+                        0,
+                    ) or 0
+                    _ctx_tokens = 0
+                    try:
+                        _entry_for_notice = self.session_store._entries.get(session_key) if session_key else None
+                        _ctx_tokens = int(getattr(_entry_for_notice, "last_prompt_tokens", 0) or 0)
+                    except (TypeError, ValueError):
+                        _ctx_tokens = 0
+                    if _ctx_tokens <= 0:
+                        _estimate_content = message if isinstance(message, str) else str(message)
+                        _ctx_tokens = estimate_messages_tokens_rough(
+                            agent_history + [{"role": "user", "content": _estimate_content}]
+                        )
+                    _ctx_notice = build_context_handoff_notice(
+                        user_config=user_config,
+                        platform_key=platform_key,
+                        context_tokens=_ctx_tokens,
+                        context_length=_ctx_len,
+                    )
+                    if _ctx_notice:
+                        _api_run_message = _prepend_current_message_prefix(
+                            _api_run_message,
+                            _ctx_notice + "\n\n",
+                        )
+                except Exception as _ctx_notice_exc:
+                    logger.debug("context handoff notice build failed: %s", _ctx_notice_exc)
                 _conversation_kwargs = {
                     "conversation_history": agent_history,
                     "task_id": session_id,

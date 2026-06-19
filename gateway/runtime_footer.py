@@ -30,6 +30,7 @@ from typing import Any, Iterable, Optional
 
 _DEFAULT_FIELDS: tuple[str, ...] = ("model", "context_pct", "cwd")
 _SEP = " · "
+_DEFAULT_HANDOFF_THRESHOLD = 0.75
 
 
 def _home_relative_cwd(cwd: str) -> str:
@@ -146,4 +147,64 @@ def build_footer_line(
         context_length=context_length,
         cwd=cwd,
         fields=cfg.get("fields") or _DEFAULT_FIELDS,
+    )
+
+
+def build_context_handoff_notice(
+    *,
+    user_config: dict[str, Any] | None,
+    platform_key: str | None,
+    context_tokens: int,
+    context_length: Optional[int],
+) -> str:
+    """Return an agent-visible context-limit handoff notice, or ``""``.
+
+    The gateway runtime footer is appended after the model has already produced
+    its final response, so it is visible to the user but not to the agent.  This
+    helper renders the equivalent context signal as a system-note prefix that
+    the gateway can prepend to the next user turn when a session is getting
+    full.
+
+    Config::
+
+        display:
+          context_handoff_notice:
+            enabled: true      # default
+            threshold: 0.75    # fraction of context window
+    """
+    if not context_length or context_length <= 0 or context_tokens < 0:
+        return ""
+
+    cfg = (user_config or {}).get("display") or {}
+    notice_cfg = cfg.get("context_handoff_notice")
+    enabled = True
+    threshold = _DEFAULT_HANDOFF_THRESHOLD
+    if isinstance(notice_cfg, dict):
+        if "enabled" in notice_cfg:
+            enabled = bool(notice_cfg.get("enabled"))
+        raw_threshold = notice_cfg.get("threshold")
+        if raw_threshold is not None:
+            try:
+                threshold = float(raw_threshold)
+            except (TypeError, ValueError):
+                threshold = _DEFAULT_HANDOFF_THRESHOLD
+
+    if not enabled:
+        return ""
+    threshold = max(0.01, min(0.99, threshold))
+    pct = context_tokens / context_length
+    if pct < threshold:
+        return ""
+
+    pct_int = max(0, min(100, round(pct * 100)))
+    threshold_int = round(threshold * 100)
+    return (
+        f"[System note: This {platform_key or 'gateway'} session is around "
+        f"{pct_int}% of the model context window, crossing the configured "
+        f"{threshold_int}% handoff threshold. Before starting broad or "
+        f"multi-step work, stop at a sane boundary, write or update the "
+        f"repo's HERMES-HANDOFF.md with current state, verification, blockers, "
+        f"and the next action, then tell Jacob to /reset or continue from "
+        f"that handoff. If the user's request is small and safe, answer it "
+        f"briefly and include the reset recommendation.]"
     )

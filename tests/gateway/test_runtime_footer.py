@@ -10,6 +10,7 @@ import pytest
 from gateway.runtime_footer import (
     _home_relative_cwd,
     _model_short,
+    build_context_handoff_notice,
     build_footer_line,
     format_runtime_footer,
     resolve_footer_config,
@@ -260,3 +261,47 @@ def test_build_footer_no_data_returns_empty_even_when_enabled():
     # With no TERMINAL_CWD env either
     if not os.environ.get("TERMINAL_CWD"):
         assert out == ""
+
+
+# ---------------------------------------------------------------------------
+# build_context_handoff_notice — agent-visible context pressure signal
+# ---------------------------------------------------------------------------
+
+def test_context_handoff_notice_empty_below_threshold():
+    out = build_context_handoff_notice(
+        user_config={},
+        platform_key="telegram",
+        context_tokens=74,
+        context_length=100,
+    )
+    assert out == ""
+
+
+def test_context_handoff_notice_emits_at_default_threshold():
+    out = build_context_handoff_notice(
+        user_config={},
+        platform_key="telegram",
+        context_tokens=75,
+        context_length=100,
+    )
+    assert "75%" in out
+    assert "HERMES-HANDOFF.md" in out
+    assert "/reset" in out
+
+
+def test_context_handoff_notice_honors_disable_and_custom_threshold():
+    disabled = build_context_handoff_notice(
+        user_config={"display": {"context_handoff_notice": {"enabled": False}}},
+        platform_key="telegram",
+        context_tokens=95,
+        context_length=100,
+    )
+    assert disabled == ""
+
+    custom = build_context_handoff_notice(
+        user_config={"display": {"context_handoff_notice": {"threshold": 0.9}}},
+        platform_key="telegram",
+        context_tokens=89,
+        context_length=100,
+    )
+    assert custom == ""
