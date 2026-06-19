@@ -14387,7 +14387,10 @@ class GatewayRunner(GatewayKanbanWatchersMixin, GatewaySlashCommandsMixin):
                 )
                 try:
                     from agent.model_metadata import estimate_messages_tokens_rough
-                    from gateway.runtime_footer import build_context_handoff_notice
+                    from gateway.runtime_footer import (
+                        build_agent_runtime_context_line,
+                        build_context_handoff_notice,
+                    )
 
                     _ctx_len = getattr(
                         getattr(agent, "context_compressor", None),
@@ -14405,6 +14408,17 @@ class GatewayRunner(GatewayKanbanWatchersMixin, GatewaySlashCommandsMixin):
                         _ctx_tokens = estimate_messages_tokens_rough(
                             agent_history + [{"role": "user", "content": _estimate_content}]
                         )
+
+                    _prefix_lines = []
+                    _runtime_line = build_agent_runtime_context_line(
+                        user_config=user_config,
+                        platform_key=platform_key,
+                        model=getattr(agent, "model", None),
+                        context_tokens=_ctx_tokens,
+                        context_length=_ctx_len,
+                    )
+                    if _runtime_line:
+                        _prefix_lines.append(_runtime_line)
                     _ctx_notice = build_context_handoff_notice(
                         user_config=user_config,
                         platform_key=platform_key,
@@ -14412,12 +14426,14 @@ class GatewayRunner(GatewayKanbanWatchersMixin, GatewaySlashCommandsMixin):
                         context_length=_ctx_len,
                     )
                     if _ctx_notice:
+                        _prefix_lines.append(_ctx_notice)
+                    if _prefix_lines:
                         _api_run_message = _prepend_current_message_prefix(
                             _api_run_message,
-                            _ctx_notice + "\n\n",
+                            "\n".join(_prefix_lines) + "\n\n",
                         )
                 except Exception as _ctx_notice_exc:
-                    logger.debug("context handoff notice build failed: %s", _ctx_notice_exc)
+                    logger.debug("runtime context notice build failed: %s", _ctx_notice_exc)
                 _conversation_kwargs = {
                     "conversation_history": agent_history,
                     "task_id": session_id,

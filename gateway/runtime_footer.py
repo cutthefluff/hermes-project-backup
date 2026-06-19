@@ -1,4 +1,4 @@
-"""Gateway runtime-metadata footer.
+"""Gateway runtime-metadata footer and agent-visible runtime status.
 
 Renders a compact footer showing runtime state (model, context %, cwd) and
 appends it to the FINAL message of an agent turn when enabled.  Off by default
@@ -21,6 +21,11 @@ the final message a user sees, not on tool-progress updates or streaming
 partials.  When streaming is on and the final text has already been delivered
 piecemeal, the footer is sent as a separate trailing message via
 ``send_trailing_footer()``.
+
+The agent-visible runtime context line is prepended to the next gateway user
+turn before the model call. This lets the agent reason from the current
+context percentage instead of relying on the user-visible footer, which the
+agent cannot see until a later turn.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ import os
 from typing import Any, Iterable, Optional
 
 _DEFAULT_FIELDS: tuple[str, ...] = ("model", "context_pct", "cwd")
+_DEFAULT_AGENT_CONTEXT_FIELDS: tuple[str, ...] = ("context_pct", "model")
 _SEP = " · "
 _DEFAULT_HANDOFF_THRESHOLD = 0.75
 
@@ -85,6 +91,47 @@ def resolve_footer_config(
                     resolved["enabled"] = bool(plat_footer.get("enabled"))
                 if isinstance(plat_footer.get("fields"), list) and plat_footer["fields"]:
                     resolved["fields"] = [str(f) for f in plat_footer["fields"]]
+
+    return resolved
+
+
+def resolve_agent_runtime_context_config(
+    user_config: dict[str, Any] | None,
+    platform_key: str | None = None,
+) -> dict[str, Any]:
+    """Resolve config for the agent-visible per-turn runtime context line.
+
+    Merge order mirrors ``resolve_footer_config``. Unlike the user-visible
+    footer, this is enabled by default because it is a tiny system-note prefix
+    that helps the agent decide whether to continue or hand off.
+
+    Config::
+
+        display:
+          agent_runtime_context:
+            enabled: true
+            fields: [context_pct, model]
+    """
+    resolved = {"enabled": True, "fields": list(_DEFAULT_AGENT_CONTEXT_FIELDS)}
+    cfg = (user_config or {}).get("display") or {}
+
+    global_cfg = cfg.get("agent_runtime_context")
+    if isinstance(global_cfg, dict):
+        if "enabled" in global_cfg:
+            resolved["enabled"] = bool(global_cfg.get("enabled"))
+        if isinstance(global_cfg.get("fields"), list) and global_cfg["fields"]:
+            resolved["fields"] = [str(f) for f in global_cfg["fields"]]
+
+    if platform_key:
+        platforms = cfg.get("platforms") or {}
+        plat_cfg = platforms.get(platform_key)
+        if isinstance(plat_cfg, dict):
+            plat_context = plat_cfg.get("agent_runtime_context")
+            if isinstance(plat_context, dict):
+                if "enabled" in plat_context:
+                    resolved["enabled"] = bool(plat_context.get("enabled"))
+                if isinstance(plat_context.get("fields"), list) and plat_context["fields"]:
+                    resolved["fields"] = [str(f) for f in plat_context["fields"]]
 
     return resolved
 
@@ -148,6 +195,40 @@ def build_footer_line(
         cwd=cwd,
         fields=cfg.get("fields") or _DEFAULT_FIELDS,
     )
+
+
+def build_agent_runtime_context_line(
+    *,
+    user_config: dict[str, Any] | None,
+    platform_key: str | None,
+    model: Optional[str],
+    context_tokens: int,
+    context_length: Optional[int],
+) -> str:
+    """Return the compact agent-visible runtime context prefix line.
+
+    Example: ``[Runtime: context 25%, model gpt-5.5]``. Empty when disabled
+    or when no requested field has usable data.
+    """
+    cfg = resolve_agent_runtime_context_config(user_config, platform_key)
+    if not cfg.get("enabled"):
+        return ""
+
+    parts: list[str] = []
+    for field in cfg.get("fields") or _DEFAULT_AGENT_CONTEXT_FIELDS:
+        if field == "context_pct":
+            if context_length and context_length > 0 and context_tokens >= 0:
+                pct = max(0, min(100, round((context_tokens / context_length) * 100)))
+                parts.append(f"context {pct}%")
+        elif field == "model":
+            m = _model_short(model)
+            if m:
+                parts.append(f"model {m}")
+        # Unknown fields are silently ignored for forward compatibility.
+
+    if not parts:
+        return ""
+    return f"[Runtime: {', '.join(parts)}]"
 
 
 def build_context_handoff_notice(

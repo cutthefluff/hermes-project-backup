@@ -10,9 +10,11 @@ import pytest
 from gateway.runtime_footer import (
     _home_relative_cwd,
     _model_short,
+    build_agent_runtime_context_line,
     build_context_handoff_notice,
     build_footer_line,
     format_runtime_footer,
+    resolve_agent_runtime_context_config,
     resolve_footer_config,
 )
 
@@ -201,6 +203,59 @@ def test_resolve_ignores_malformed_config():
     user = {"display": {"runtime_footer": "on"}}
     cfg = resolve_footer_config(user, "telegram")
     assert cfg["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# agent-visible runtime context line
+# ---------------------------------------------------------------------------
+
+def test_agent_runtime_context_defaults_on():
+    cfg = resolve_agent_runtime_context_config({}, "telegram")
+    assert cfg == {"enabled": True, "fields": ["context_pct", "model"]}
+
+
+def test_agent_runtime_context_platform_override_wins():
+    user = {
+        "display": {
+            "agent_runtime_context": {"enabled": True, "fields": ["model"]},
+            "platforms": {
+                "telegram": {"agent_runtime_context": {"enabled": False}},
+            },
+        },
+    }
+    assert resolve_agent_runtime_context_config(user, "telegram")["enabled"] is False
+    assert resolve_agent_runtime_context_config(user, "discord")["fields"] == ["model"]
+
+
+def test_build_agent_runtime_context_line_default_shape():
+    out = build_agent_runtime_context_line(
+        user_config={},
+        platform_key="telegram",
+        model="openai/gpt-5.5",
+        context_tokens=25,
+        context_length=100,
+    )
+    assert out == "[Runtime: context 25%, model gpt-5.5]"
+
+
+def test_build_agent_runtime_context_line_disabled_or_empty():
+    disabled = build_agent_runtime_context_line(
+        user_config={"display": {"agent_runtime_context": {"enabled": False}}},
+        platform_key="telegram",
+        model="openai/gpt-5.5",
+        context_tokens=25,
+        context_length=100,
+    )
+    assert disabled == ""
+
+    empty = build_agent_runtime_context_line(
+        user_config={"display": {"agent_runtime_context": {"fields": ["bogus"]}}},
+        platform_key="telegram",
+        model="",
+        context_tokens=25,
+        context_length=100,
+    )
+    assert empty == ""
 
 
 # ---------------------------------------------------------------------------

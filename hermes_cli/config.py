@@ -1454,6 +1454,14 @@ DEFAULT_CONFIG = {
             "enabled": False,
             "fields": ["model", "context_pct", "cwd"],  # Order shown; drop any to hide
         },
+        # Agent-visible runtime context prepended to each gateway user turn before
+        # the model call. This is intentionally separate from runtime_footer: the
+        # footer is user-visible after the response, while this tiny prefix lets
+        # the agent see current context pressure while generating the response.
+        "agent_runtime_context": {
+            "enabled": True,
+            "fields": ["context_pct", "model"],
+        },
         "copy_shortcut": "auto",  # "auto" (platform default) | "ctrl_c" | "ctrl_shift_c" | "disabled"
     },
 
