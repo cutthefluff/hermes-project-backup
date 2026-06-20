@@ -10,11 +10,8 @@ import pytest
 from gateway.runtime_footer import (
     _home_relative_cwd,
     _model_short,
-    build_agent_runtime_context_line,
-    build_context_handoff_notice,
     build_footer_line,
     format_runtime_footer,
-    resolve_agent_runtime_context_config,
     resolve_footer_config,
 )
 
@@ -206,59 +203,6 @@ def test_resolve_ignores_malformed_config():
 
 
 # ---------------------------------------------------------------------------
-# agent-visible runtime context line
-# ---------------------------------------------------------------------------
-
-def test_agent_runtime_context_defaults_on():
-    cfg = resolve_agent_runtime_context_config({}, "telegram")
-    assert cfg == {"enabled": True, "fields": ["context_pct", "model"]}
-
-
-def test_agent_runtime_context_platform_override_wins():
-    user = {
-        "display": {
-            "agent_runtime_context": {"enabled": True, "fields": ["model"]},
-            "platforms": {
-                "telegram": {"agent_runtime_context": {"enabled": False}},
-            },
-        },
-    }
-    assert resolve_agent_runtime_context_config(user, "telegram")["enabled"] is False
-    assert resolve_agent_runtime_context_config(user, "discord")["fields"] == ["model"]
-
-
-def test_build_agent_runtime_context_line_default_shape():
-    out = build_agent_runtime_context_line(
-        user_config={},
-        platform_key="telegram",
-        model="openai/gpt-5.5",
-        context_tokens=25,
-        context_length=100,
-    )
-    assert out == "[Runtime: context 25%, model gpt-5.5]"
-
-
-def test_build_agent_runtime_context_line_disabled_or_empty():
-    disabled = build_agent_runtime_context_line(
-        user_config={"display": {"agent_runtime_context": {"enabled": False}}},
-        platform_key="telegram",
-        model="openai/gpt-5.5",
-        context_tokens=25,
-        context_length=100,
-    )
-    assert disabled == ""
-
-    empty = build_agent_runtime_context_line(
-        user_config={"display": {"agent_runtime_context": {"fields": ["bogus"]}}},
-        platform_key="telegram",
-        model="",
-        context_tokens=25,
-        context_length=100,
-    )
-    assert empty == ""
-
-
-# ---------------------------------------------------------------------------
 # build_footer_line — top-level entry point used by gateway/run.py
 # ---------------------------------------------------------------------------
 
@@ -316,47 +260,3 @@ def test_build_footer_no_data_returns_empty_even_when_enabled():
     # With no TERMINAL_CWD env either
     if not os.environ.get("TERMINAL_CWD"):
         assert out == ""
-
-
-# ---------------------------------------------------------------------------
-# build_context_handoff_notice — agent-visible context pressure signal
-# ---------------------------------------------------------------------------
-
-def test_context_handoff_notice_empty_below_threshold():
-    out = build_context_handoff_notice(
-        user_config={},
-        platform_key="telegram",
-        context_tokens=74,
-        context_length=100,
-    )
-    assert out == ""
-
-
-def test_context_handoff_notice_emits_at_default_threshold():
-    out = build_context_handoff_notice(
-        user_config={},
-        platform_key="telegram",
-        context_tokens=75,
-        context_length=100,
-    )
-    assert "75%" in out
-    assert "HERMES-HANDOFF.md" in out
-    assert "/reset" in out
-
-
-def test_context_handoff_notice_honors_disable_and_custom_threshold():
-    disabled = build_context_handoff_notice(
-        user_config={"display": {"context_handoff_notice": {"enabled": False}}},
-        platform_key="telegram",
-        context_tokens=95,
-        context_length=100,
-    )
-    assert disabled == ""
-
-    custom = build_context_handoff_notice(
-        user_config={"display": {"context_handoff_notice": {"threshold": 0.9}}},
-        platform_key="telegram",
-        context_tokens=89,
-        context_length=100,
-    )
-    assert custom == ""

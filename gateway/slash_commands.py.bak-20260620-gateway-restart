@@ -776,14 +776,7 @@ class GatewaySlashCommandsMixin:
         # exits when the gateway dies, taking the detached helper with it).
         _under_service = bool(os.environ.get("INVOCATION_ID"))  # systemd sets this
         _in_container = os.path.exists("/.dockerenv") or os.path.exists("/run/.containerenv")
-        # Jacob's Docker image starts the gateway as a background child from
-        # /entrypoint.sh while PID 1 stays alive as the dashboard.  Treating
-        # every container as service-managed makes /restart exit with code 75
-        # and nothing respawns it.  Only use the service/container restart path
-        # when the gateway itself is PID 1 or systemd-managed; otherwise use
-        # Hermes's detached restart helper so Telegram /restart works without
-        # SSHing in to start a new foreground gateway.
-        if _under_service or (_in_container and os.getpid() == 1):
+        if _under_service or _in_container:
             self.request_restart(detached=False, via_service=True)
         else:
             self.request_restart(detached=True, via_service=False)
