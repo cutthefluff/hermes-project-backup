@@ -6673,6 +6673,9 @@ def _gateway_command_inner(args):
             if old_pid and launch_detached_profile_gateway_restart(get_active_profile_name(), old_pid):
                 print("✓ Gateway restart queued in detached background process")
                 return
+            if _spawn_detached_gateway():
+                print("✓ Started gateway as a detached background process")
+                return
             run_gateway(verbose=0)
 
     elif subcmd == "status":

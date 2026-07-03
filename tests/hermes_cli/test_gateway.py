@@ -327,12 +327,17 @@ def test_gateway_restart_on_windows_preserves_failure_fallback(monkeypatch):
     monkeypatch.setattr(gateway_windows, "restart", fail_restart)
     monkeypatch.setattr(gateway, "stop_profile_gateway", lambda: calls.append("stop") or False)
     monkeypatch.setattr(gateway, "_wait_for_gateway_exit", lambda *args, **kwargs: calls.append("wait"))
-    monkeypatch.setattr(gateway, "run_gateway", lambda *args, **kwargs: calls.append("run"))
+    monkeypatch.setattr(gateway, "_spawn_detached_gateway", lambda: calls.append("detached") or True)
+    monkeypatch.setattr(
+        gateway,
+        "run_gateway",
+        lambda *args, **kwargs: pytest.fail("manual restart fallback should prefer detached launch"),
+    )
 
     args = SimpleNamespace(gateway_command="restart", system=False, all=False)
     gateway.gateway_command(args)
 
-    assert calls == ["restart", "stop", "wait", "run"]
+    assert calls == ["restart", "stop", "wait", "detached"]
 
 
 def test_systemd_status_warns_when_linger_disabled(monkeypatch, tmp_path, capsys):
