@@ -94,7 +94,7 @@ def _format_reset(dt: Optional[datetime], *, compact: bool = False) -> str:
         # For long windows, day-of-week is enough context and avoids the noisy
         # full UTC timestamp in gateway reset/status messages.
         if total_seconds >= 24 * 3600:
-            rel += f" ({local_dt.strftime('%a')})"
+            rel += f" ({local_dt.strftime('%A')})"
         return rel
     return f"{rel} ({local_dt.strftime('%Y-%m-%d %H:%M %Z')})"
 
@@ -102,43 +102,31 @@ def _format_reset(dt: Optional[datetime], *, compact: bool = False) -> str:
 def _compact_detail(detail: str) -> str:
     text = str(detail)
     if text.startswith("Free usage resets:"):
-        value = text.removeprefix("Free usage resets:").strip()
-        if value.endswith(" available"):
-            value = value[: -len(" available")].strip()
-        return f"Free resets: {value}"
+        return "Free resets:" + text.removeprefix("Free usage resets:")
     return text
 
 
 def _format_reset_compact(dt: Optional[datetime], *, unit: str) -> str:
-    """Compact reset delta for gateway footers.
+    """Compact reset delta for footers: ``3.3h`` or ``6.2d``.
 
-    Session windows render as ``3h 1m``. Weekly windows render as
-    ``6d 22h (Sat)``. Keep this intentionally terse because Jacob wants the
-    Telegram footer to match the Codex UI-style account-limit format exactly,
-    with no provider label or explanatory prose.
+    ``unit`` is intentionally caller-selected so the 5h Codex window always
+    displays in hours and the weekly window always displays in days, matching
+    the mental model users have from the Codex UI.
     """
     if not dt:
         return "?"
-    local_dt = dt.astimezone()
     delta = dt - _utc_now()
-    seconds = max(0, int(round(delta.total_seconds())))
+    seconds = max(0.0, float(delta.total_seconds()))
     if unit == "d":
-        days, rem = divmod(seconds, 86400)
-        hours = rem // 3600
-        return f"{days}d {hours}h ({local_dt.strftime('%a')})"
-    hours, rem = divmod(seconds, 3600)
-    minutes = rem // 60
-    return f"{hours}h {minutes}m"
+        return f"{seconds / 86400:.1f}d"
+    return f"{seconds / 3600:.1f}h"
 
 
 def format_codex_usage_compact(snapshot: Optional[AccountUsageSnapshot]) -> str:
-    """Return Codex plan usage for gateway footers.
+    """Return compact Codex plan usage for gateway footers.
 
-    Required Telegram footer format::
-
-        Session: 13% left • resets 3h 1m
-        Weekly: 86% left • resets 6d 22h (Sat)
-        Free resets: 2
+    Format: ``<5h remaining>% <hours>, <weekly remaining>% <days>, <resets>``
+    Example: ``78% 4.8h, 97% 7.0d, 2``.
     """
     if not snapshot or snapshot.provider != "openai-codex":
         return ""
@@ -146,16 +134,16 @@ def format_codex_usage_compact(snapshot: Optional[AccountUsageSnapshot]) -> str:
     by_label = {window.label.lower(): window for window in snapshot.windows}
     session = by_label.get("session") or by_label.get("5h")
     weekly = by_label.get("weekly") or by_label.get("week") or by_label.get("7d")
-    lines: list[str] = []
+    parts: list[str] = []
     if session and session.used_percent is not None:
         remaining = max(0, round(100 - float(session.used_percent)))
-        lines.append(f"Session: {remaining}% left • resets {_format_reset_compact(session.reset_at, unit='h')}")
+        parts.append(f"{remaining}% {_format_reset_compact(session.reset_at, unit='h')}")
     if weekly and weekly.used_percent is not None:
         remaining = max(0, round(100 - float(weekly.used_percent)))
-        lines.append(f"Weekly: {remaining}% left • resets {_format_reset_compact(weekly.reset_at, unit='d')}")
+        parts.append(f"{remaining}% {_format_reset_compact(weekly.reset_at, unit='d')}")
     if snapshot.free_resets_available is not None:
-        lines.append(f"Free resets: {snapshot.free_resets_available}")
-    return "\n".join(lines)
+        parts.append(str(snapshot.free_resets_available))
+    return ", ".join(parts)
 
 
 def render_account_usage_lines(
