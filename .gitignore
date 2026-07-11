@@ -71,6 +71,7 @@ website/build/
 .notebooklm-playwright/
 .pip-cache/
 .uv-cache/
+.pytest-cache/
 
 # IDE / OS
 .vscode/
