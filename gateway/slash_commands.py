@@ -203,6 +203,55 @@ class GatewaySlashCommandsMixin:
         except Exception:
             pass
 
+
+        # For Telegram /reset, show account limits in Jacob's requested long
+        # reset-message shape, without changing the runtime footer format.
+        def _reset_limit_delta(dt, *, weekly: bool = False) -> str:
+            if not dt:
+                return "?"
+            try:
+                now = datetime.now(dt.tzinfo) if getattr(dt, "tzinfo", None) else datetime.now()
+                seconds = max(0, int(round((dt - now).total_seconds())))
+                if weekly:
+                    days, rem = divmod(seconds, 86400)
+                    hours = rem // 3600
+                    return f"{days}d {hours}h ({dt.astimezone().strftime('%a')})"
+                hours, rem = divmod(seconds, 3600)
+                minutes = rem // 60
+                return f"{hours}h {minutes}m"
+            except Exception:
+                return "?"
+
+        def _format_reset_account_limits(snapshot) -> str:
+            if not snapshot or getattr(snapshot, "provider", None) != "openai-codex":
+                return ""
+            by_label = {str(w.label).lower(): w for w in getattr(snapshot, "windows", ())}
+            session = by_label.get("session") or by_label.get("5h")
+            weekly = by_label.get("weekly") or by_label.get("week") or by_label.get("7d")
+            lines = []
+            if session and getattr(session, "used_percent", None) is not None:
+                remaining = max(0, round(100 - float(session.used_percent)))
+                lines.append(f"Session: {remaining}% left • resets {_reset_limit_delta(session.reset_at)}")
+            if weekly and getattr(weekly, "used_percent", None) is not None:
+                remaining = max(0, round(100 - float(weekly.used_percent)))
+                lines.append(f"Weekly: {remaining}% left • resets {_reset_limit_delta(weekly.reset_at, weekly=True)}")
+            free_resets = getattr(snapshot, "free_resets_available", None)
+            if free_resets is not None:
+                lines.append(f"Free resets: {free_resets}")
+            return "\n".join(lines)
+
+        try:
+            from gateway.run import _load_gateway_config
+
+            _cfg = _load_gateway_config()
+            _provider = ((_cfg.get("model") or {}).get("provider") or "").strip() if isinstance(_cfg, dict) else ""
+            _snapshot = await asyncio.to_thread(fetch_account_usage, _provider) if _provider else None
+            _reset_limits = _format_reset_account_limits(_snapshot)
+            if _reset_limits:
+                return EphemeralReply(_reset_limits)
+        except Exception:
+            pass
+
         # Append a random tip to the reset message
         try:
             from hermes_cli.tips import get_random_tip

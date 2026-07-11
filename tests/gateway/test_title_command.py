@@ -339,6 +339,89 @@ class TestResetCommandWithTitle:
         # Header must NOT claim the rejected title as the session name
         assert "New session started: Dup" not in reply
 
+    @pytest.mark.asyncio
+    async def test_reset_command_returns_long_account_limits_without_changing_footer(self, monkeypatch):
+        """/new account-limit message uses long reset shape, separate from compact footer."""
+        from datetime import datetime, timedelta, timezone
+
+        from agent.account_usage import AccountUsageSnapshot, AccountUsageWindow
+        from gateway.run import GatewayRunner
+        from gateway.session import SessionEntry, SessionSource, build_session_key
+
+        runner = object.__new__(GatewayRunner)
+        runner.config = GatewayConfig(
+            platforms={Platform.TELEGRAM: PlatformConfig(enabled=True, token="***")}
+        )
+        runner.adapters = {Platform.TELEGRAM: MagicMock(send=AsyncMock())}
+        runner._voice_mode = {}
+        runner.hooks = SimpleNamespace(emit=AsyncMock(), loaded_hooks=False)
+        runner._session_model_overrides = {}
+        runner._pending_model_notes = {}
+        runner._background_tasks = set()
+
+        source = SessionSource(
+            platform=Platform.TELEGRAM,
+            user_id="12345",
+            chat_id="67890",
+            user_name="testuser",
+        )
+        session_key = build_session_key(source)
+        new_session_entry = SessionEntry(
+            session_key=session_key,
+            session_id="sess-new",
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+            platform=Platform.TELEGRAM,
+            chat_type="dm",
+        )
+        runner.session_store = MagicMock()
+        runner.session_store.get_or_create_session.return_value = new_session_entry
+        runner.session_store.reset_session.return_value = new_session_entry
+        runner.session_store._entries = {session_key: new_session_entry}
+        runner.session_store._generate_session_key.return_value = session_key
+        runner._running_agents = {}
+        runner._pending_messages = {}
+        runner._pending_approvals = {}
+        runner._session_db = MagicMock()
+        runner._agent_cache = {}
+        runner._agent_cache_lock = None
+        runner._is_user_authorized = lambda _source: True
+        runner._format_session_info = lambda: "SHOULD NOT APPEAR"
+
+        now = datetime.now(timezone.utc)
+        snapshot = AccountUsageSnapshot(
+            provider="openai-codex",
+            source="usage_api",
+            fetched_at=now,
+            windows=(
+                AccountUsageWindow(
+                    label="Session",
+                    used_percent=87,
+                    reset_at=now + timedelta(hours=3, minutes=1),
+                ),
+                AccountUsageWindow(
+                    label="Weekly",
+                    used_percent=14,
+                    reset_at=now + timedelta(days=6, hours=22),
+                ),
+            ),
+            free_resets_available=2,
+        )
+        monkeypatch.setattr(
+            "gateway.run._load_gateway_config",
+            lambda: {"model": {"provider": "openai-codex"}},
+        )
+        monkeypatch.setattr("gateway.slash_commands.fetch_account_usage", lambda _provider: snapshot)
+
+        result = await runner._handle_reset_command(_make_event(text="/new"))
+
+        assert str(result) == (
+            f"Session: 13% left • resets 3h 1m\n"
+            f"Weekly: 86% left • resets 6d 22h ({(now + timedelta(days=6, hours=22)).astimezone().strftime('%a')})\n"
+            "Free resets: 2"
+        )
+
+
 
 # ---------------------------------------------------------------------------
 # /new in help output
