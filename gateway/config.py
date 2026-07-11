@@ -491,6 +491,7 @@ class GatewayConfig:
 
     # STT settings
     stt_enabled: bool = True  # Whether to auto-transcribe inbound voice messages
+    stt_review_before_processing: bool = False  # If true, transcribe voice and send a draft back without invoking the agent
 
     # Session isolation in shared chats
     group_sessions_per_user: bool = True  # Isolate group/channel sessions per participant when user IDs are available
@@ -598,6 +599,7 @@ class GatewayConfig:
             "always_log_local": self.always_log_local,
             "filter_silence_narration": self.filter_silence_narration,
             "stt_enabled": self.stt_enabled,
+            "stt_review_before_processing": self.stt_review_before_processing,
             "group_sessions_per_user": self.group_sessions_per_user,
             "thread_sessions_per_user": self.thread_sessions_per_user,
             "unauthorized_dm_behavior": self.unauthorized_dm_behavior,
@@ -642,6 +644,9 @@ class GatewayConfig:
         stt_enabled = data.get("stt_enabled")
         if stt_enabled is None:
             stt_enabled = data.get("stt", {}).get("enabled") if isinstance(data.get("stt"), dict) else None
+        stt_review_before_processing = data.get("stt_review_before_processing")
+        if stt_review_before_processing is None:
+            stt_review_before_processing = data.get("stt", {}).get("review_before_processing") if isinstance(data.get("stt"), dict) else None
 
         group_sessions_per_user = data.get("group_sessions_per_user")
         thread_sessions_per_user = data.get("thread_sessions_per_user")
@@ -669,6 +674,7 @@ class GatewayConfig:
                 data.get("filter_silence_narration"), True
             ),
             stt_enabled=_coerce_bool(stt_enabled, True),
+            stt_review_before_processing=_coerce_bool(stt_review_before_processing, False),
             group_sessions_per_user=_coerce_bool(group_sessions_per_user, True),
             thread_sessions_per_user=_coerce_bool(thread_sessions_per_user, False),
             unauthorized_dm_behavior=unauthorized_dm_behavior,
