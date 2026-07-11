@@ -11712,17 +11712,11 @@ class GatewayRunner(GatewayKanbanWatchersMixin, GatewaySlashCommandsMixin):
         )
         candidate = self._compose_transcription_review_candidate(transcripts, user_text)
         if candidate:
-            body = (
-                "🎙️ Voice transcript draft:\n\n"
-                f"{candidate}\n\n"
-                "Hermes has not processed this yet. Reply with the exact text you want processed, "
-                "or copy/edit/resend it."
-            )
+            body = candidate
+            metadata = dict(metadata or {})
+            metadata["telegram_voice_review_send_text"] = candidate
         else:
-            body = (
-                "🎙️ I received your voice message, but transcription failed. "
-                "Hermes has not processed it. Send the text version when ready."
-            )
+            body = "Voice transcription failed. Send the text version when ready."
         try:
             await adapter.send(source.chat_id, body, metadata=metadata)
         except Exception as exc:

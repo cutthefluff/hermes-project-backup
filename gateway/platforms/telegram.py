@@ -15,6 +15,7 @@ import os
 import tempfile
 import html as _html
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Any
 
@@ -438,6 +439,7 @@ class TelegramAdapter(BasePlatformAdapter):
         )
         self._pending_text_batches: Dict[str, MessageEvent] = {}
         self._pending_text_batch_tasks: Dict[str, asyncio.Task] = {}
+        self._voice_review_sends: Dict[str, str] = {}
         self._polling_error_task: Optional[asyncio.Task] = None
         self._polling_conflict_count: int = 0
         self._polling_network_error_count: int = 0
@@ -1881,6 +1883,15 @@ class TelegramAdapter(BasePlatformAdapter):
                     for chunk in chunks
                 ]
             
+            voice_review_text = (metadata or {}).get("telegram_voice_review_send_text")
+            reply_markup = None
+            if voice_review_text:
+                review_id = uuid.uuid4().hex[:16]
+                self._voice_review_sends[review_id] = str(voice_review_text)
+                reply_markup = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Send", callback_data=f"vr:{review_id}")]
+                ])
+
             message_ids = []
             thread_id = self._metadata_thread_id(metadata)
             requested_thread_id = self._message_thread_id_for_send(thread_id)
@@ -1954,6 +1965,7 @@ class TelegramAdapter(BasePlatformAdapter):
                                 text=chunk,
                                 parse_mode=ParseMode.MARKDOWN_V2,
                                 reply_to_message_id=reply_to_id,
+                                reply_markup=reply_markup if i == 0 else None,
                                 **thread_kwargs,
                                 **self._link_preview_kwargs(),
                                 **self._notification_kwargs(metadata),
@@ -1968,6 +1980,7 @@ class TelegramAdapter(BasePlatformAdapter):
                                     text=plain_chunk,
                                     parse_mode=None,
                                     reply_to_message_id=reply_to_id,
+                                    reply_markup=reply_markup if i == 0 else None,
                                     **thread_kwargs,
                                     **self._link_preview_kwargs(),
                                     **self._notification_kwargs(metadata),
@@ -3250,6 +3263,60 @@ class TelegramAdapter(BasePlatformAdapter):
         query_chat_type = getattr(query_chat, "type", None)
         query_thread_id = getattr(query_message, "message_thread_id", None)
         query_user_name = getattr(query.from_user, "first_name", None)
+
+        # --- Voice transcript review callbacks ---
+        if data.startswith("vr:"):
+            review_id = data.split(":", 1)[1]
+            text = self._voice_review_sends.pop(review_id, None)
+            if not text:
+                await query.answer(text="Transcript draft expired. Copy/edit/resend the text instead.")
+                return
+
+            caller_id = str(getattr(query.from_user, "id", ""))
+            if not self._is_callback_user_authorized(
+                caller_id,
+                chat_id=query_chat_id,
+                chat_type=str(query_chat_type) if query_chat_type is not None else None,
+                thread_id=str(query_thread_id) if query_thread_id is not None else None,
+                user_name=query_user_name,
+            ):
+                await query.answer(text="⛔ You are not authorized to send this transcript.")
+                return
+
+            await query.answer(text="Sending transcript to Hermes…")
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
+            from gateway.session import SessionSource
+
+            chat_type = str(query_chat_type or "dm").strip().lower() or "dm"
+            if chat_type == "private":
+                chat_type = "dm"
+            elif chat_type == "supergroup":
+                chat_type = "forum" if query_thread_id is not None else "group"
+
+            source = SessionSource(
+                platform=Platform.TELEGRAM,
+                chat_id=str(query_chat_id or ""),
+                chat_type=chat_type,
+                user_id=caller_id,
+                user_name=str(query_user_name).strip() if query_user_name else None,
+                thread_id=str(query_thread_id) if query_thread_id is not None else None,
+                message_id=str(getattr(query_message, "message_id", "") or ""),
+            )
+            event = MessageEvent(
+                text=text,
+                message_type=MessageType.TEXT,
+                source=source,
+                raw_message=query,
+                message_id=f"callback:{getattr(query, 'id', review_id)}",
+                reply_to_message_id=str(getattr(query_message, "message_id", "") or "") or None,
+            )
+            event = self._apply_telegram_group_observe_attribution(event)
+            await self.handle_message(event)
+            return
 
         # --- Model picker callbacks ---
         if data.startswith(("mp:", "mpg:", "mm:", "mb", "mx", "mg:")):
