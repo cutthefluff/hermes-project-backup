@@ -155,9 +155,9 @@ def test_format_footer_codex_quota_on_second_line():
         context_length=100,
         cwd="",
         fields=("context_pct", "codex_quota"),
-        codex_quota="10% 3.3h, 30% 6.2d, 2",
+        codex_quota="Session: 10% left • resets 3h 18m\nWeekly: 30% left • resets 6d 4h (Sat)\nFree resets: 2",
     )
-    assert out == "25%\n10% 3.3h, 30% 6.2d, 2"
+    assert out == "25%\nSession: 10% left • resets 3h 18m\nWeekly: 30% left • resets 6d 4h (Sat)\nFree resets: 2"
 
 # ---------------------------------------------------------------------------
 # resolve_footer_config
@@ -277,7 +277,7 @@ def test_build_footer_no_data_returns_empty_even_when_enabled():
 def test_build_footer_with_codex_quota_field(monkeypatch):
     monkeypatch.setattr(
         "gateway.runtime_footer._get_codex_quota_compact_cached",
-        lambda user_config: "10% 3.3h, 30% 6.2d, 2",
+        lambda user_config: "Session: 10% left • resets 3h 18m\nWeekly: 30% left • resets 6d 4h (Sat)\nFree resets: 2",
     )
     out = build_footer_line(
         user_config={
@@ -290,4 +290,4 @@ def test_build_footer_with_codex_quota_field(monkeypatch):
         context_length=100,
         cwd="",
     )
-    assert out == "25%\n10% 3.3h, 30% 6.2d, 2"
+    assert out == "25%\nSession: 10% left • resets 3h 18m\nWeekly: 30% left • resets 6d 4h (Sat)\nFree resets: 2"
