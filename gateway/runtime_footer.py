@@ -31,12 +31,15 @@ agent cannot see until a later turn.
 from __future__ import annotations
 
 import os
+import time
 from typing import Any, Iterable, Optional
 
 _DEFAULT_FIELDS: tuple[str, ...] = ("model", "context_pct", "cwd")
 _DEFAULT_AGENT_CONTEXT_FIELDS: tuple[str, ...] = ("context_pct", "model")
 _SEP = " · "
 _DEFAULT_HANDOFF_THRESHOLD = 0.75
+_CODEX_USAGE_CACHE: dict[str, Any] = {"fetched_at": 0.0, "value": ""}
+_CODEX_USAGE_CACHE_TTL_SECONDS = 60.0
 
 
 def _home_relative_cwd(cwd: str) -> str:
@@ -143,6 +146,7 @@ def format_runtime_footer(
     context_length: Optional[int],
     cwd: Optional[str] = None,
     fields: Iterable[str] = _DEFAULT_FIELDS,
+    codex_quota: Optional[str] = None,
 ) -> str:
     """Render the footer line, or return "" if no fields have data.
 
@@ -150,6 +154,7 @@ def format_runtime_footer(
     partially-populated footer is better than a line with ``?%`` or empty slots.
     """
     parts: list[str] = []
+    quota_line = ""
     for field in fields:
         if field == "model":
             m = _model_short(model)
@@ -163,12 +168,45 @@ def format_runtime_footer(
             rel = _home_relative_cwd(cwd or os.environ.get("TERMINAL_CWD", ""))
             if rel:
                 parts.append(rel)
+        elif field in {"codex_quota", "codex_usage"}:
+            if codex_quota:
+                quota_line = codex_quota
         # Unknown field names are silently ignored.
 
-    if not parts:
-        return ""
-    return _SEP.join(parts)
+    main = _SEP.join(parts)
+    if quota_line and main:
+        return f"{main}\n{quota_line}"
+    return main or quota_line
 
+
+
+def _codex_footer_enabled_for_config(user_config: dict[str, Any] | None) -> bool:
+    model_cfg = (user_config or {}).get("model") or {}
+    return str(model_cfg.get("provider") or "").strip().lower() == "openai-codex"
+
+
+def _get_codex_quota_compact_cached(user_config: dict[str, Any] | None) -> str:
+    """Fetch compact OpenAI Codex account quota for footer use, with a short TTL.
+
+    This intentionally returns an empty string unless the active Hermes provider
+    is ``openai-codex``. The footer runs on every final gateway response, so the
+    usage endpoint is cached briefly and all failures are fail-open.
+    """
+    if not _codex_footer_enabled_for_config(user_config):
+        return ""
+    now = time.time()
+    cached_at = float(_CODEX_USAGE_CACHE.get("fetched_at") or 0.0)
+    if now - cached_at < _CODEX_USAGE_CACHE_TTL_SECONDS:
+        return str(_CODEX_USAGE_CACHE.get("value") or "")
+    try:
+        from agent.account_usage import fetch_account_usage, format_codex_usage_compact
+
+        value = format_codex_usage_compact(fetch_account_usage("openai-codex"))
+    except Exception:
+        value = ""
+    _CODEX_USAGE_CACHE["fetched_at"] = now
+    _CODEX_USAGE_CACHE["value"] = value
+    return value
 
 def build_footer_line(
     *,
@@ -188,12 +226,17 @@ def build_footer_line(
     cfg = resolve_footer_config(user_config, platform_key)
     if not cfg.get("enabled"):
         return ""
+    fields = cfg.get("fields") or _DEFAULT_FIELDS
+    codex_quota = ""
+    if any(str(field) in {"codex_quota", "codex_usage"} for field in fields):
+        codex_quota = _get_codex_quota_compact_cached(user_config)
     return format_runtime_footer(
         model=model,
         context_tokens=context_tokens,
         context_length=context_length,
         cwd=cwd,
-        fields=cfg.get("fields") or _DEFAULT_FIELDS,
+        fields=fields,
+        codex_quota=codex_quota,
     )
 
 

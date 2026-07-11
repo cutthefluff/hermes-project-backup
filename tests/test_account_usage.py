@@ -4,6 +4,7 @@ from agent.account_usage import (
     AccountUsageSnapshot,
     AccountUsageWindow,
     fetch_account_usage,
+    format_codex_usage_compact,
     render_account_usage_lines,
 )
 
@@ -80,6 +81,7 @@ def test_fetch_account_usage_codex(monkeypatch):
                     },
                 },
                 "credits": {"has_credits": True, "balance": 12.5},
+                "rate_limit_reset_credits": {"available_count": 2},
             }
         ),
     )
@@ -93,6 +95,8 @@ def test_fetch_account_usage_codex(monkeypatch):
     assert snapshot.windows[0].used_percent == 15.0
     assert snapshot.windows[0].reset_at == datetime.fromtimestamp(1_900_000_000, tz=timezone.utc)
     assert "Credits balance: $12.50" in snapshot.details
+    assert snapshot.free_resets_available == 2
+    assert "Free usage resets: 2 available" in snapshot.details
 
 
 def test_render_account_usage_lines_includes_reset_and_provider():
@@ -116,6 +120,31 @@ def test_render_account_usage_lines_includes_reset_and_provider():
     assert "openai-codex (Pro)" in lines[1]
     assert "Session: 75% remaining (25% used)" in lines[2]
     assert "Credits balance: $9.99" in lines[3]
+
+
+def test_format_codex_usage_compact_includes_remaining_resets_and_free_resets(monkeypatch):
+    fixed_now = datetime.fromtimestamp(1_900_000_000, tz=timezone.utc)
+    monkeypatch.setattr("agent.account_usage._utc_now", lambda: fixed_now)
+    snapshot = AccountUsageSnapshot(
+        provider="openai-codex",
+        source="usage_api",
+        fetched_at=fixed_now,
+        windows=(
+            AccountUsageWindow(
+                label="Session",
+                used_percent=90,
+                reset_at=datetime.fromtimestamp(1_900_000_000 + 3.3 * 3600, tz=timezone.utc),
+            ),
+            AccountUsageWindow(
+                label="Weekly",
+                used_percent=70,
+                reset_at=datetime.fromtimestamp(1_900_000_000 + 6.2 * 86400, tz=timezone.utc),
+            ),
+        ),
+        free_resets_available=2,
+    )
+
+    assert format_codex_usage_compact(snapshot) == "10% 3.3h, 30% 6.2d, 2"
 
 
 def test_fetch_account_usage_openrouter_uses_limit_remaining_and_ignores_deprecated_rate_limit(monkeypatch):

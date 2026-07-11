@@ -210,9 +210,27 @@ class GatewaySlashCommandsMixin:
         except Exception:
             _tip_line = ""
 
+        # OpenAI Codex account usage snapshot. Keep this on /reset where the
+        # user explicitly asked for a richer boundary message; normal replies use
+        # the shorter runtime footer field instead. Fail-open so reset never hangs
+        # or errors because an upstream quota endpoint is unavailable.
+        _usage_block = ""
+        try:
+            from gateway.run import _load_gateway_config
+
+            _cfg = _load_gateway_config()
+            _provider = str(((_cfg.get("model") or {}).get("provider")) or "").strip().lower()
+            if _provider == "openai-codex":
+                _snapshot = await asyncio.to_thread(fetch_account_usage, "openai-codex")
+                _usage_lines = render_account_usage_lines(_snapshot, markdown=True)
+                if _usage_lines:
+                    _usage_block = "\n\n" + "\n".join(_usage_lines)
+        except Exception:
+            _usage_block = ""
+
         if session_info:
-            return EphemeralReply(f"{header}\n\n{session_info}{_tip_line}")
-        return EphemeralReply(f"{header}{_tip_line}")
+            return EphemeralReply(f"{header}\n\n{session_info}{_usage_block}{_tip_line}")
+        return EphemeralReply(f"{header}{_usage_block}{_tip_line}")
 
     async def _handle_profile_command(self, event: MessageEvent) -> str:
         """Handle /profile — show active profile name and home directory."""

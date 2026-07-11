@@ -40,6 +40,7 @@ class AccountUsageSnapshot:
     windows: tuple[AccountUsageWindow, ...] = ()
     details: tuple[str, ...] = ()
     unavailable_reason: Optional[str] = None
+    free_resets_available: Optional[int] = None
 
     @property
     def available(self) -> bool:
@@ -90,6 +91,46 @@ def _format_reset(dt: Optional[datetime]) -> str:
     else:
         rel = f"in {minutes}m"
     return f"{rel} ({local_dt.strftime('%Y-%m-%d %H:%M %Z')})"
+
+
+def _format_reset_compact(dt: Optional[datetime], *, unit: str) -> str:
+    """Compact reset delta for footers: ``3.3h`` or ``6.2d``.
+
+    ``unit`` is intentionally caller-selected so the 5h Codex window always
+    displays in hours and the weekly window always displays in days, matching
+    the mental model users have from the Codex UI.
+    """
+    if not dt:
+        return "?"
+    delta = dt - _utc_now()
+    seconds = max(0.0, float(delta.total_seconds()))
+    if unit == "d":
+        return f"{seconds / 86400:.1f}d"
+    return f"{seconds / 3600:.1f}h"
+
+
+def format_codex_usage_compact(snapshot: Optional[AccountUsageSnapshot]) -> str:
+    """Return compact Codex plan usage for gateway footers.
+
+    Format: ``<5h remaining>% <hours>, <weekly remaining>% <days>, <resets>``
+    Example: ``78% 4.8h, 97% 7.0d, 2``.
+    """
+    if not snapshot or snapshot.provider != "openai-codex":
+        return ""
+
+    by_label = {window.label.lower(): window for window in snapshot.windows}
+    session = by_label.get("session") or by_label.get("5h")
+    weekly = by_label.get("weekly") or by_label.get("week") or by_label.get("7d")
+    parts: list[str] = []
+    if session and session.used_percent is not None:
+        remaining = max(0, round(100 - float(session.used_percent)))
+        parts.append(f"{remaining}% {_format_reset_compact(session.reset_at, unit='h')}")
+    if weekly and weekly.used_percent is not None:
+        remaining = max(0, round(100 - float(weekly.used_percent)))
+        parts.append(f"{remaining}% {_format_reset_compact(weekly.reset_at, unit='d')}")
+    if snapshot.free_resets_available is not None:
+        parts.append(str(snapshot.free_resets_available))
+    return ", ".join(parts)
 
 
 def render_account_usage_lines(snapshot: Optional[AccountUsageSnapshot], *, markdown: bool = False) -> list[str]:
@@ -386,6 +427,12 @@ def _fetch_codex_account_usage() -> Optional[AccountUsageSnapshot]:
             details.append(f"Credits balance: ${float(balance):.2f}")
         elif credits.get("unlimited"):
             details.append("Credits balance: unlimited")
+    free_resets_available: Optional[int] = None
+    reset_credits = payload.get("rate_limit_reset_credits") or {}
+    raw_available = reset_credits.get("available_count")
+    if isinstance(raw_available, (int, float)) and raw_available >= 0:
+        free_resets_available = int(raw_available)
+        details.append(f"Free usage resets: {free_resets_available} available")
     return AccountUsageSnapshot(
         provider="openai-codex",
         source="usage_api",
@@ -393,6 +440,7 @@ def _fetch_codex_account_usage() -> Optional[AccountUsageSnapshot]:
         plan=_title_case_slug(payload.get("plan_type")),
         windows=tuple(windows),
         details=tuple(details),
+        free_resets_available=free_resets_available,
     )
 
 
