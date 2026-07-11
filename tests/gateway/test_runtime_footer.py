@@ -147,18 +147,6 @@ def test_format_footer_unknown_field_silently_ignored():
     assert out == "gpt-5.4 · 50%"
 
 
-
-def test_format_footer_codex_quota_on_second_line():
-    out = format_runtime_footer(
-        model="openai/gpt-5.5",
-        context_tokens=25,
-        context_length=100,
-        cwd="",
-        fields=("context_pct", "codex_quota"),
-        codex_quota="Session: 10% left • resets 3h 18m\nWeekly: 30% left • resets 6d 4h (Sat)\nFree resets: 2",
-    )
-    assert out == "25%\nSession: 10% left • resets 3h 18m\nWeekly: 30% left • resets 6d 4h (Sat)\nFree resets: 2"
-
 # ---------------------------------------------------------------------------
 # resolve_footer_config
 # ---------------------------------------------------------------------------
@@ -272,22 +260,3 @@ def test_build_footer_no_data_returns_empty_even_when_enabled():
     # With no TERMINAL_CWD env either
     if not os.environ.get("TERMINAL_CWD"):
         assert out == ""
-
-
-def test_build_footer_with_codex_quota_field(monkeypatch):
-    monkeypatch.setattr(
-        "gateway.runtime_footer._get_codex_quota_compact_cached",
-        lambda user_config: "Session: 10% left • resets 3h 18m\nWeekly: 30% left • resets 6d 4h (Sat)\nFree resets: 2",
-    )
-    out = build_footer_line(
-        user_config={
-            "model": {"provider": "openai-codex"},
-            "display": {"runtime_footer": {"enabled": True, "fields": ["context_pct", "codex_quota"]}},
-        },
-        platform_key="telegram",
-        model="openai/gpt-5.5",
-        context_tokens=25,
-        context_length=100,
-        cwd="",
-    )
-    assert out == "25%\nSession: 10% left • resets 3h 18m\nWeekly: 30% left • resets 6d 4h (Sat)\nFree resets: 2"

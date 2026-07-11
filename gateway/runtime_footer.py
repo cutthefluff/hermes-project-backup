@@ -186,12 +186,7 @@ def _codex_footer_enabled_for_config(user_config: dict[str, Any] | None) -> bool
 
 
 def _get_codex_quota_compact_cached(user_config: dict[str, Any] | None) -> str:
-    """Fetch compact OpenAI Codex account quota for footer use, with a short TTL.
-
-    This intentionally returns an empty string unless the active Hermes provider
-    is ``openai-codex``. The footer runs on every final gateway response, so the
-    usage endpoint is cached briefly and all failures are fail-open.
-    """
+    """Fetch compact OpenAI Codex account quota for footer use, with a short TTL."""
     if not _codex_footer_enabled_for_config(user_config):
         return ""
     now = time.time()
@@ -207,6 +202,7 @@ def _get_codex_quota_compact_cached(user_config: dict[str, Any] | None) -> str:
     _CODEX_USAGE_CACHE["fetched_at"] = now
     _CODEX_USAGE_CACHE["value"] = value
     return value
+
 
 def build_footer_line(
     *,

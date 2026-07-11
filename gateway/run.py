@@ -7753,19 +7753,10 @@ class GatewayRunner(GatewayKanbanWatchersMixin, GatewaySlashCommandsMixin):
                     )
 
             if audio_paths:
-                _voice_review_original_text = message_text
                 message_text, _successful_transcripts = await self._enrich_message_with_transcription(
                     message_text,
                     audio_paths,
                 )
-                if getattr(self.config, "stt_review_before_processing", False):
-                    await self._send_transcription_review(
-                        source,
-                        event,
-                        _successful_transcripts,
-                        _voice_review_original_text,
-                    )
-                    return
                 # Echo each successful transcript back to the user immediately,
                 # before the agent loop runs. Lets the user verify STT quality
                 # in real-time and see the raw whisper output verbatim.
@@ -11683,45 +11674,6 @@ class GatewayRunner(GatewayKanbanWatchersMixin, GatewaySlashCommandsMixin):
             return prefix
         return user_text
 
-    def _compose_transcription_review_candidate(
-        self,
-        transcripts: List[str],
-        user_text: str,
-    ) -> str:
-        """Build the user-editable text candidate for voice review mode."""
-        parts = [tx.strip() for tx in transcripts if tx and tx.strip()]
-        caption = (user_text or "").strip()
-        if caption and caption != "(The user sent a message with no text content)":
-            parts.append(caption)
-        return "\n\n".join(parts).strip()
-
-    async def _send_transcription_review(
-        self,
-        source,
-        event,
-        transcripts: List[str],
-        user_text: str,
-    ) -> None:
-        """Send a transcript draft to the user and deliberately skip the agent loop."""
-        adapter = self.adapters.get(source.platform)
-        if not adapter:
-            return
-        metadata = self._thread_metadata_for_source(
-            source,
-            self._reply_anchor_for_event(event) if event is not None else None,
-        )
-        candidate = self._compose_transcription_review_candidate(transcripts, user_text)
-        if candidate:
-            body = candidate
-            metadata = dict(metadata or {})
-            metadata["telegram_voice_review_send_text"] = candidate
-        else:
-            body = "Voice transcription failed. Send the text version when ready."
-        try:
-            await adapter.send(source.chat_id, body, metadata=metadata)
-        except Exception as exc:
-            logger.debug("Transcript review send failed (non-fatal): %s", exc)
-
     async def _enrich_message_with_transcription(
         self,
         user_text: str,
@@ -11866,14 +11818,6 @@ class GatewayRunner(GatewayKanbanWatchersMixin, GatewaySlashCommandsMixin):
             enriched_text, successful_transcripts = await self._enrich_message_with_transcription(
                 text, audio_paths,
             )
-            if getattr(self.config, "stt_review_before_processing", False):
-                await self._send_transcription_review(
-                    source,
-                    event,
-                    successful_transcripts,
-                    text,
-                )
-                return None
             # Echo raw transcripts back to the user so voice interrupts
             # feel identical to fresh voice messages.
             if successful_transcripts:

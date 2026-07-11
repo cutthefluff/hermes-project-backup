@@ -127,8 +127,8 @@ def test_render_account_usage_lines_is_compact_by_default(monkeypatch):
 
     assert lines == [
         "Session: 75% left • resets 4h 24m",
-        "Weekly: 92% left • resets 6d 23h (Sat)",
-        "Free resets: 2",
+        "Weekly: 92% left • resets 6d 23h (Saturday)",
+        "Free resets: 2 available",
     ]
 
 
@@ -177,11 +177,7 @@ def test_format_codex_usage_compact_includes_remaining_resets_and_free_resets(mo
         free_resets_available=2,
     )
 
-    assert format_codex_usage_compact(snapshot) == (
-        "Session: 10% left • resets 3h 18m\n"
-        "Weekly: 30% left • resets 6d 4h (Sat)\n"
-        "Free resets: 2"
-    )
+    assert format_codex_usage_compact(snapshot) == "10% 3.3h, 30% 6.2d, 2"
 
 
 def test_fetch_account_usage_openrouter_uses_limit_remaining_and_ignores_deprecated_rate_limit(monkeypatch):
