@@ -73,24 +73,37 @@ def _parse_dt(value: Any) -> Optional[datetime]:
     return None
 
 
-def _format_reset(dt: Optional[datetime]) -> str:
+def _format_reset(dt: Optional[datetime], *, compact: bool = False) -> str:
     if not dt:
         return "unknown"
     local_dt = dt.astimezone()
     delta = dt - _utc_now()
     total_seconds = int(delta.total_seconds())
     if total_seconds <= 0:
-        return f"now ({local_dt.strftime('%Y-%m-%d %H:%M %Z')})"
+        return "now" if compact else f"now ({local_dt.strftime('%Y-%m-%d %H:%M %Z')})"
     hours, rem = divmod(total_seconds, 3600)
     minutes = rem // 60
     if hours >= 24:
         days, hours = divmod(hours, 24)
-        rel = f"in {days}d {hours}h"
+        rel = f"{days}d {hours}h" if compact else f"in {days}d {hours}h"
     elif hours > 0:
-        rel = f"in {hours}h {minutes}m"
+        rel = f"{hours}h {minutes}m" if compact else f"in {hours}h {minutes}m"
     else:
-        rel = f"in {minutes}m"
+        rel = f"{minutes}m" if compact else f"in {minutes}m"
+    if compact:
+        # For long windows, day-of-week is enough context and avoids the noisy
+        # full UTC timestamp in gateway reset/status messages.
+        if total_seconds >= 24 * 3600:
+            rel += f" ({local_dt.strftime('%A')})"
+        return rel
     return f"{rel} ({local_dt.strftime('%Y-%m-%d %H:%M %Z')})"
+
+
+def _compact_detail(detail: str) -> str:
+    text = str(detail)
+    if text.startswith("Free usage resets:"):
+        return "Free resets:" + text.removeprefix("Free usage resets:")
+    return text
 
 
 def _format_reset_compact(dt: Optional[datetime], *, unit: str) -> str:
@@ -133,29 +146,39 @@ def format_codex_usage_compact(snapshot: Optional[AccountUsageSnapshot]) -> str:
     return ", ".join(parts)
 
 
-def render_account_usage_lines(snapshot: Optional[AccountUsageSnapshot], *, markdown: bool = False) -> list[str]:
+def render_account_usage_lines(
+    snapshot: Optional[AccountUsageSnapshot],
+    *,
+    markdown: bool = False,
+    compact: bool = True,
+) -> list[str]:
     if not snapshot:
         return []
-    header = f"📈 {'**' if markdown else ''}{snapshot.title}{'**' if markdown else ''}"
-    lines = [header]
-    if snapshot.plan:
-        lines.append(f"Provider: {snapshot.provider} ({snapshot.plan})")
-    else:
-        lines.append(f"Provider: {snapshot.provider}")
+    lines: list[str] = []
+    if not compact:
+        header = f"📈 {'**' if markdown else ''}{snapshot.title}{'**' if markdown else ''}"
+        lines.append(header)
+        if snapshot.plan:
+            lines.append(f"Provider: {snapshot.provider} ({snapshot.plan})")
+        else:
+            lines.append(f"Provider: {snapshot.provider}")
     for window in snapshot.windows:
         if window.used_percent is None:
             base = f"{window.label}: unavailable"
         else:
             remaining = max(0, round(100 - float(window.used_percent)))
             used = max(0, round(float(window.used_percent)))
-            base = f"{window.label}: {remaining}% remaining ({used}% used)"
+            if compact:
+                base = f"{window.label}: {remaining}% left"
+            else:
+                base = f"{window.label}: {remaining}% remaining ({used}% used)"
         if window.reset_at:
-            base += f" • resets {_format_reset(window.reset_at)}"
+            base += f" • resets {_format_reset(window.reset_at, compact=compact)}"
         elif window.detail:
             base += f" • {window.detail}"
         lines.append(base)
     for detail in snapshot.details:
-        lines.append(detail)
+        lines.append(_compact_detail(detail) if compact else detail)
     if snapshot.unavailable_reason:
         lines.append(f"Unavailable: {snapshot.unavailable_reason}")
     return lines

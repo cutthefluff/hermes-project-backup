@@ -99,7 +99,40 @@ def test_fetch_account_usage_codex(monkeypatch):
     assert "Free usage resets: 2 available" in snapshot.details
 
 
-def test_render_account_usage_lines_includes_reset_and_provider():
+def test_render_account_usage_lines_is_compact_by_default(monkeypatch):
+    monkeypatch.setattr(
+        "agent.account_usage._utc_now",
+        lambda: datetime(2026, 7, 11, 6, 38, tzinfo=timezone.utc),
+    )
+    snapshot = AccountUsageSnapshot(
+        provider="openai-codex",
+        source="usage_api",
+        fetched_at=datetime.now(timezone.utc),
+        plan="Pro",
+        windows=(
+            AccountUsageWindow(
+                label="Session",
+                used_percent=25,
+                reset_at=datetime(2026, 7, 11, 11, 2, tzinfo=timezone.utc),
+            ),
+            AccountUsageWindow(
+                label="Weekly",
+                used_percent=8,
+                reset_at=datetime(2026, 7, 18, 6, 2, tzinfo=timezone.utc),
+            ),
+        ),
+        details=("Free usage resets: 2 available",),
+    )
+    lines = render_account_usage_lines(snapshot)
+
+    assert lines == [
+        "Session: 75% left • resets 4h 24m",
+        "Weekly: 92% left • resets 6d 23h (Saturday)",
+        "Free resets: 2 available",
+    ]
+
+
+def test_render_account_usage_lines_supports_legacy_verbose_shape():
     snapshot = AccountUsageSnapshot(
         provider="openai-codex",
         source="usage_api",
@@ -114,7 +147,7 @@ def test_render_account_usage_lines_includes_reset_and_provider():
         ),
         details=("Credits balance: $9.99",),
     )
-    lines = render_account_usage_lines(snapshot)
+    lines = render_account_usage_lines(snapshot, compact=False)
 
     assert lines[0] == "📈 Account limits"
     assert "openai-codex (Pro)" in lines[1]
