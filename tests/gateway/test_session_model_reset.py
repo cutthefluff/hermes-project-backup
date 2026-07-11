@@ -1,10 +1,11 @@
 """Tests that /new (and its /reset alias) clears session-scoped overrides."""
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from agent.account_usage import AccountUsageSnapshot, AccountUsageWindow
 from gateway.config import GatewayConfig, Platform, PlatformConfig
 from gateway.platforms.base import MessageEvent
 from gateway.session import SessionEntry, SessionSource, build_session_key
@@ -62,6 +63,18 @@ def _make_runner():
     runner._agent_cache_lock = None  # disables _evict_cached_agent lock path
     runner._is_user_authorized = lambda _source: True
     runner._format_session_info = lambda: ""
+    runner._telegram_topic_new_header = lambda source: None
+    runner._is_telegram_topic_lane = lambda source: False
+    runner._record_telegram_topic_binding = MagicMock()
+    runner._release_running_agent_state = MagicMock()
+    runner._cleanup_agent_resources = MagicMock()
+    runner._evict_cached_agent = MagicMock()
+    runner._clear_session_boundary_security_state = MagicMock()
+    def _clear_reasoning_override(session_key, reasoning_config):
+        runner._session_reasoning_overrides.pop(session_key, None)
+        return None
+
+    runner._set_session_reasoning_override = _clear_reasoning_override
 
     return runner
 
@@ -139,3 +152,45 @@ async def test_new_command_only_clears_own_session():
     assert other_key in runner._session_reasoning_overrides
     assert session_key not in runner._pending_model_notes
     assert other_key in runner._pending_model_notes
+
+
+@pytest.mark.asyncio
+async def test_reset_reply_keeps_header_session_info_limits_and_tip(monkeypatch):
+    """Codex usage limits augment the normal /reset info, they do not replace it."""
+    runner = _make_runner()
+    runner._format_session_info = lambda: "◆ Model: gpt-5.5\n◆ Provider: openai-codex\n◆ Context: 272K tokens (detected)"
+
+    now = datetime.now(timezone.utc)
+    snapshot = AccountUsageSnapshot(
+        provider="openai-codex",
+        source="test",
+        fetched_at=now,
+        windows=(
+            AccountUsageWindow("session", used_percent=100.0, reset_at=now + timedelta(hours=2, minutes=32)),
+            AccountUsageWindow("weekly", used_percent=20.0, reset_at=now + timedelta(days=6, hours=21)),
+        ),
+        free_resets_available=2,
+    )
+
+    monkeypatch.setattr("gateway.run._load_gateway_config", lambda: {"model": {"provider": "openai-codex"}})
+    monkeypatch.setattr("gateway.slash_commands.fetch_account_usage", lambda provider: snapshot)
+    monkeypatch.setattr(
+        "hermes_cli.tips.get_random_tip",
+        lambda: "GPT and Codex models get special system prompt guidance for tool discipline and mandatory tool use.",
+    )
+
+    reply = await runner._handle_reset_command(_make_event("/reset"))
+    text = str(reply)
+
+    assert text.startswith(
+        "✨ Session reset! Starting fresh.\n\n"
+        "◆ Model: gpt-5.5\n"
+        "◆ Provider: openai-codex\n"
+        "◆ Context: 272K tokens (detected)\n\n"
+    )
+    assert "Session: 0% left • resets" in text
+    assert "Weekly: 80% left • resets" in text
+    assert (
+        "Free resets: 2\n✦ Tip: GPT and Codex models get special system prompt guidance "
+        "for tool discipline and mandatory tool use."
+    ) in text

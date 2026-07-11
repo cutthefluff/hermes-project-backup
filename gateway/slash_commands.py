@@ -248,7 +248,16 @@ class GatewaySlashCommandsMixin:
             _snapshot = await asyncio.to_thread(fetch_account_usage, _provider) if _provider else None
             _reset_limits = _format_reset_account_limits(_snapshot)
             if _reset_limits:
-                return EphemeralReply(_reset_limits)
+                try:
+                    from hermes_cli.tips import get_random_tip
+                    _tip_line = t("gateway.reset.tip", tip=get_random_tip())
+                except Exception:
+                    _tip_line = ""
+                parts = [header]
+                if session_info:
+                    parts.append(session_info)
+                parts.append(_reset_limits)
+                return EphemeralReply("\n\n".join(parts) + _tip_line)
         except Exception:
             pass
 
