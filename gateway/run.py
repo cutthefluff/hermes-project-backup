@@ -7753,10 +7753,40 @@ class GatewayRunner(GatewayKanbanWatchersMixin, GatewaySlashCommandsMixin):
                     )
 
             if audio_paths:
+                _pre_stt_user_text = (message_text or "").strip()
                 message_text, _successful_transcripts = await self._enrich_message_with_transcription(
                     message_text,
                     audio_paths,
                 )
+                if _successful_transcripts and getattr(self.config, "stt_review_before_processing", False):
+                    _review_adapter = self.adapters.get(source.platform)
+                    _review_meta = self._thread_metadata_for_source(source, self._reply_anchor_for_event(event))
+                    _review_candidate_parts = []
+                    if _pre_stt_user_text:
+                        _review_candidate_parts.append(_pre_stt_user_text)
+                    _review_candidate_parts.extend(_successful_transcripts)
+                    _review_candidate = "\n\n".join(
+                        part.strip() for part in _review_candidate_parts if part and part.strip()
+                    )
+                    if _review_adapter and _review_candidate:
+                        _review_meta = dict(_review_meta or {})
+                        _review_meta["telegram_voice_review_send_text"] = _review_candidate
+                        try:
+                            _review_result = await _review_adapter.send(
+                                source.chat_id,
+                                _review_candidate,
+                                metadata=_review_meta,
+                            )
+                            if _review_result.success:
+                                logger.info(
+                                    "Voice transcript review draft sent; skipping agent loop until approval"
+                                )
+                                return None
+                        except Exception as _review_exc:
+                            logger.warning(
+                                "Voice transcript review draft failed; falling back to immediate processing: %s",
+                                _review_exc,
+                            )
                 # Echo each successful transcript back to the user immediately,
                 # before the agent loop runs. Lets the user verify STT quality
                 # in real-time and see the raw whisper output verbatim.
@@ -11815,9 +11845,39 @@ class GatewayRunner(GatewayKanbanWatchersMixin, GatewaySlashCommandsMixin):
                 audio_paths.append(path)
 
         if audio_paths:
+            pre_stt_text = (text or "").strip()
             enriched_text, successful_transcripts = await self._enrich_message_with_transcription(
                 text, audio_paths,
             )
+            if successful_transcripts and getattr(self.config, "stt_review_before_processing", False):
+                review_adapter = self.adapters.get(source.platform)
+                review_meta = {"thread_id": source.thread_id} if source.thread_id else {}
+                review_candidate_parts = []
+                if pre_stt_text:
+                    review_candidate_parts.append(pre_stt_text)
+                review_candidate_parts.extend(successful_transcripts)
+                review_candidate = "\n\n".join(
+                    part.strip() for part in review_candidate_parts if part and part.strip()
+                )
+                if review_adapter and review_candidate:
+                    review_meta = dict(review_meta or {})
+                    review_meta["telegram_voice_review_send_text"] = review_candidate
+                    try:
+                        review_result = await review_adapter.send(
+                            source.chat_id,
+                            review_candidate,
+                            metadata=review_meta,
+                        )
+                        if review_result.success:
+                            logger.info(
+                                "Queued voice transcript review draft sent; skipping agent loop until approval"
+                            )
+                            return None
+                    except Exception as review_exc:
+                        logger.warning(
+                            "Queued voice transcript review draft failed; falling back to immediate processing: %s",
+                            review_exc,
+                        )
             # Echo raw transcripts back to the user so voice interrupts
             # feel identical to fresh voice messages.
             if successful_transcripts:

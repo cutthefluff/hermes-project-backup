@@ -16,6 +16,11 @@ def test_gateway_config_stt_disabled_from_dict_nested():
     assert config.stt_enabled is False
 
 
+def test_gateway_config_stt_review_before_processing_from_dict_nested():
+    config = GatewayConfig.from_dict({"stt": {"review_before_processing": True}})
+    assert config.stt_review_before_processing is True
+
+
 def test_load_gateway_config_bridges_stt_enabled_from_config_yaml(tmp_path, monkeypatch):
     hermes_home = tmp_path / ".hermes"
     hermes_home.mkdir()
@@ -30,6 +35,23 @@ def test_load_gateway_config_bridges_stt_enabled_from_config_yaml(tmp_path, monk
     config = load_gateway_config()
 
     assert config.stt_enabled is False
+
+
+def test_load_gateway_config_bridges_stt_review_before_processing_from_config_yaml(tmp_path, monkeypatch):
+    hermes_home = tmp_path / ".hermes"
+    hermes_home.mkdir()
+    (hermes_home / "config.yaml").write_text(
+        yaml.dump({"stt": {"enabled": True, "review_before_processing": True}}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    config = load_gateway_config()
+
+    assert config.stt_enabled is True
+    assert config.stt_review_before_processing is True
 
 
 @pytest.mark.asyncio
@@ -143,3 +165,62 @@ async def test_prepare_inbound_message_text_transcribes_queued_voice_event():
     assert result is not None
     assert "queued voice transcript" in result
     assert "voice message" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_prepare_inbound_message_text_review_mode_sends_draft_and_skips_agent():
+    from gateway.run import GatewayRunner
+
+    class FakeAdapter:
+        def __init__(self):
+            self.calls = []
+
+        async def send(self, chat_id, content, metadata=None):
+            self.calls.append((chat_id, content, metadata))
+            return type("Result", (), {"success": True})()
+
+    runner = GatewayRunner.__new__(GatewayRunner)
+    runner.config = GatewayConfig(stt_enabled=True, stt_review_before_processing=True)
+    runner.adapters = {}
+    runner._model = "test-model"
+    runner._base_url = ""
+    runner._has_setup_skill = lambda: False
+
+    source = SessionSource(
+        platform=Platform.TELEGRAM,
+        chat_id="123",
+        chat_type="dm",
+        user_id="42",
+    )
+    event = MessageEvent(
+        text="",
+        message_type=MessageType.VOICE,
+        source=source,
+        media_urls=["/tmp/review-voice.ogg"],
+        media_types=["audio/ogg"],
+    )
+    fake_adapter = FakeAdapter()
+    runner.adapters[Platform.TELEGRAM] = fake_adapter
+
+    with patch(
+        "tools.transcription_tools.transcribe_audio",
+        return_value={
+            "success": True,
+            "transcript": "review me first",
+            "provider": "local_command",
+        },
+    ):
+        result = await runner._prepare_inbound_message_text(
+            event=event,
+            source=source,
+            history=[],
+        )
+
+    assert result is None
+    assert fake_adapter.calls == [
+        (
+            "123",
+            "review me first",
+            {"telegram_voice_review_send_text": "review me first"},
+        )
+    ]

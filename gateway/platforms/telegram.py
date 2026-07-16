@@ -479,6 +479,10 @@ class TelegramAdapter(BasePlatformAdapter):
         # Clarify button state: clarify_id → session_key (for the clarify tool's
         # multiple-choice prompts; see GatewayRunner clarify_callback wiring).
         self._clarify_state: Dict[str, str] = {}
+        # Voice-review button state: review_id → transcript text.  This is an
+        # in-memory convenience; if the gateway restarts, the user can still
+        # copy/edit/resend the plain transcript body.
+        self._voice_review_state: Dict[str, str] = {}
         # Notification mode for message sends.
         # "important" — only final responses, approvals, and slash confirmations
         #               trigger notifications; tool progress, streaming, status
@@ -1865,6 +1869,64 @@ class TelegramAdapter(BasePlatformAdapter):
         # Skip whitespace-only text to prevent Telegram 400 empty-text errors.
         if not content or not content.strip():
             return SendResult(success=True, message_id=None)
+
+        # Voice transcript review mode: send the transcript as plain editable
+        # text plus a single inline "Send" button, then wait for the callback
+        # to inject it into the normal message pipeline.  Keep this out of the
+        # normal Markdown formatting path so the visible body is exactly the
+        # transcript Jacob can copy/edit.
+        if metadata and metadata.get("telegram_voice_review_send_text"):
+            try:
+                import itertools
+                if not hasattr(self, "_voice_review_counter"):
+                    self._voice_review_counter = itertools.count(1)
+                review_id = str(next(self._voice_review_counter))
+                transcript_text = str(metadata.get("telegram_voice_review_send_text") or content).strip()
+                self._voice_review_state[review_id] = transcript_text
+
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("✅ Send", callback_data=f"vr:{review_id}")]
+                ])
+                chunks = self.truncate_message(
+                    transcript_text,
+                    self.MAX_MESSAGE_LENGTH,
+                    len_fn=utf16_len,
+                )
+                message_ids = []
+                thread_id = self._metadata_thread_id(metadata)
+                reply_to_id = self._reply_to_message_id_for_send(
+                    None,
+                    metadata,
+                    reply_to_mode=self._reply_to_mode,
+                )
+                for i, chunk in enumerate(chunks):
+                    kwargs: Dict[str, Any] = {
+                        "chat_id": int(chat_id),
+                        "text": chunk,
+                        "parse_mode": None,
+                        "reply_to_message_id": reply_to_id if i == 0 else None,
+                        **self._thread_kwargs_for_send(
+                            chat_id,
+                            thread_id,
+                            metadata,
+                            reply_to_message_id=reply_to_id if i == 0 else None,
+                            reply_to_mode=self._reply_to_mode,
+                        ),
+                        **self._link_preview_kwargs(),
+                        **self._notification_kwargs(metadata),
+                    }
+                    if i == 0:
+                        kwargs["reply_markup"] = keyboard
+                    msg = await self._send_message_with_thread_fallback(**kwargs)
+                    message_ids.append(str(msg.message_id))
+                return SendResult(
+                    success=True,
+                    message_id=message_ids[0] if message_ids else None,
+                    raw_response={"message_ids": message_ids, "voice_review_id": review_id},
+                )
+            except Exception as e:
+                logger.error("[%s] Failed to send voice review transcript: %s", self.name, e, exc_info=True)
+                return SendResult(success=False, error=str(e))
         
         try:
             # Format and split message if needed
@@ -3268,6 +3330,65 @@ class TelegramAdapter(BasePlatformAdapter):
                 query_thread_id=query_thread_id,
                 query_user_name=query_user_name,
             )
+            return
+
+        # --- Voice transcript review callbacks (vr:id) ---
+        if data.startswith("vr:"):
+            review_id = data.split(":", 1)[1]
+            caller_id = str(getattr(query.from_user, "id", ""))
+            if not self._is_callback_user_authorized(
+                caller_id,
+                chat_id=query_chat_id,
+                chat_type=str(query_chat_type) if query_chat_type is not None else None,
+                thread_id=str(query_thread_id) if query_thread_id is not None else None,
+                user_name=query_user_name,
+            ):
+                await query.answer(text="⛔ You are not authorized to send this transcript.")
+                return
+
+            transcript_text = self._voice_review_state.pop(review_id, None)
+            if not transcript_text:
+                await query.answer(text="This transcript draft expired. Copy/edit/resend the text.")
+                try:
+                    await query.edit_message_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
+                return
+
+            await query.answer(text="Sending transcript…")
+            try:
+                await query.edit_message_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
+            try:
+                from gateway.session import SessionSource
+
+                normalized_chat_type = str(query_chat_type or "dm").strip().lower() or "dm"
+                if normalized_chat_type == "private":
+                    normalized_chat_type = "dm"
+                elif normalized_chat_type == "supergroup":
+                    normalized_chat_type = "forum" if query_thread_id is not None else "group"
+
+                source = SessionSource(
+                    platform=Platform.TELEGRAM,
+                    chat_id=str(query_chat_id),
+                    chat_type=normalized_chat_type,
+                    user_id=caller_id,
+                    user_name=str(query_user_name).strip() if query_user_name else None,
+                    thread_id=str(query_thread_id) if query_thread_id is not None else None,
+                )
+                event = MessageEvent(
+                    text=transcript_text,
+                    message_type=MessageType.TEXT,
+                    source=source,
+                    raw_message=query_message,
+                    message_id=str(getattr(query_message, "message_id", "")) or None,
+                )
+                await self.handle_message(event)
+            except Exception as exc:
+                logger.error("[%s] voice-review callback failed: %s", self.name, exc, exc_info=True)
+                await query.answer(text="Failed to send transcript.")
             return
 
         # --- Exec approval callbacks (ea:choice:id) ---
