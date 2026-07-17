@@ -4043,8 +4043,18 @@ class BasePlatformAdapter(ABC):
             if result is None:
                 return
             delivery_attempted = True
-            if getattr(result, "success", False):
+            ok = bool(getattr(result, "success", False))
+            if ok:
                 delivery_succeeded = True
+            logger.info(
+                "[%s] Final response delivery %s: path=normal-send chat=%s "
+                "message_id=%s error=%s",
+                self.name,
+                "ok" if ok else "failed",
+                event.source.chat_id,
+                getattr(result, "message_id", None) or "?",
+                getattr(result, "error", None) or "",
+            )
 
         # Reuse the interrupt event set by handle_message() (which marks
         # the session active before spawning this task to prevent races).

@@ -204,6 +204,36 @@ class GatewayStreamConsumer:
         the subsequent cosmetic edit (cursor removal) failed."""
         return self._final_content_delivered
 
+    def _log_final_delivery(
+        self,
+        *,
+        ok: bool,
+        path: str,
+        message_id: Optional[str] = None,
+        error: Optional[str] = None,
+        content_len: Optional[int] = None,
+        chunks: Optional[int] = None,
+    ) -> None:
+        """Log the terminal delivery state for a user-visible final answer.
+
+        Telegram delivery bugs are painful when progress/status bubbles are
+        visible but the final answer silently disappears. Keep this log line
+        compact, explicit, and grep-friendly so ops can distinguish "final
+        send succeeded" from "Hermes only updated a working/progress bubble".
+        """
+        logger.info(
+            "Final response delivery %s: path=%s platform=%s chat=%s "
+            "message_id=%s chars=%s chunks=%s error=%s",
+            "ok" if ok else "failed",
+            path,
+            getattr(self.adapter, "name", type(self.adapter).__name__),
+            self.chat_id,
+            message_id or self._message_id or "?",
+            "?" if content_len is None else content_len,
+            "?" if chunks is None else chunks,
+            error or "",
+        )
+
     async def _edit_message(
         self,
         *,
@@ -509,6 +539,13 @@ class GatewayStreamConsumer:
                             self._final_response_sent = chunks_delivered
                             if chunks_delivered:
                                 self._final_content_delivered = True
+                            self._log_final_delivery(
+                                ok=chunks_delivered,
+                                path="stream-overflow-chunks",
+                                content_len=len(self._last_sent_text or ""),
+                                chunks=len(chunks),
+                                error=None if chunks_delivered else "one or more chunks failed",
+                            )
                             return
                         if got_segment_break:
                             self._message_id = None
@@ -579,7 +616,9 @@ class GatewayStreamConsumer:
                     # here instead of letting the base gateway path send the
                     # full response again.
                     if self._accumulated:
+                        _final_path = "stream-final-none"
                         if self._fallback_final_send:
+                            _final_path = "stream-fallback-final"
                             await self._send_fallback_final(self._accumulated)
                         elif (
                             current_update_visible
@@ -589,21 +628,30 @@ class GatewayStreamConsumer:
                             # final accumulated content.  Skip the redundant
                             # final edit — but only for adapters that don't
                             # need an explicit finalize signal.
+                            _final_path = "stream-final-visible"
                             self._final_response_sent = True
                             self._final_content_delivered = True
                         elif self._message_id:
                             # Either the mid-stream edit didn't run (no
                             # visible update this tick) OR the adapter needs
                             # explicit finalize=True to close the stream.
+                            _final_path = "stream-final-edit"
                             self._final_response_sent = await self._send_or_edit(
                                 self._accumulated, finalize=True,
                             )
                             if self._final_response_sent:
                                 self._final_content_delivered = True
                         elif not self._already_sent:
+                            _final_path = "stream-final-send"
                             self._final_response_sent = await self._send_or_edit(self._accumulated)
                             if self._final_response_sent:
                                 self._final_content_delivered = True
+                        self._log_final_delivery(
+                            ok=bool(self._final_response_sent or self._final_content_delivered),
+                            path=_final_path,
+                            content_len=len(self._accumulated),
+                            error=None if (self._final_response_sent or self._final_content_delivered) else "final stream delivery not confirmed",
+                        )
                     return
 
                 if commentary_text is not None:
