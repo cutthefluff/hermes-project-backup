@@ -583,12 +583,7 @@ class TelegramAdapter(BasePlatformAdapter):
         if not metadata:
             return None
         reply_to = metadata.get("telegram_reply_to_message_id")
-        if reply_to is None:
-            return None
-        try:
-            return int(reply_to)
-        except (TypeError, ValueError):
-            return None
+        return int(reply_to) if reply_to is not None else None
 
     @staticmethod
     def _looks_like_private_chat_id(chat_id: str) -> bool:
@@ -624,15 +619,6 @@ class TelegramAdapter(BasePlatformAdapter):
     def _dm_topic_missing_anchor_error() -> str:
         return "Telegram DM topic delivery requires a reply anchor; refusing to send outside the requested topic"
 
-    @staticmethod
-    def _parse_reply_to_message_id(reply_to: Optional[str]) -> Optional[int]:
-        if reply_to is None:
-            return None
-        try:
-            return int(reply_to)
-        except (TypeError, ValueError):
-            return None
-
     @classmethod
     def _reply_to_message_id_for_send(
         cls,
@@ -640,9 +626,8 @@ class TelegramAdapter(BasePlatformAdapter):
         metadata: Optional[Dict[str, Any]] = None,
         reply_to_mode: Optional[str] = None,
     ) -> Optional[int]:
-        reply_to_id = cls._parse_reply_to_message_id(reply_to)
-        if reply_to_id is not None:
-            return reply_to_id
+        if reply_to:
+            return int(reply_to)
         if metadata and metadata.get("telegram_dm_topic_reply_fallback"):
             if reply_to_mode == "off":
                 return None
@@ -1992,15 +1977,8 @@ class TelegramAdapter(BasePlatformAdapter):
                     and self._reply_to_mode == "off"
                     and bool(metadata and metadata.get("telegram_dm_topic_reply_fallback"))
                 )
-                parsed_reply_to = self._parse_reply_to_message_id(reply_to)
-                reply_to_source = (
-                    str(parsed_reply_to)
-                    if parsed_reply_to is not None
-                    else (
-                        str(metadata_reply_to)
-                        if private_dm_topic_send and metadata_reply_to is not None
-                        else None
-                    )
+                reply_to_source = reply_to or (
+                    str(metadata_reply_to) if private_dm_topic_send and metadata_reply_to is not None else None
                 )
                 if private_dm_topic_send:
                     should_thread = (

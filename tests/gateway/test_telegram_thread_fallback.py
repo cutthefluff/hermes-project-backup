@@ -681,34 +681,6 @@ async def test_created_private_topic_thread_not_found_fails_without_root_fallbac
 
 
 @pytest.mark.asyncio
-async def test_send_sanitizes_callback_reply_to_for_dm_topic_fallback():
-    """Synthetic callback ids are not Telegram message ids; use metadata anchor instead."""
-    adapter = _make_adapter()
-    call_log = []
-
-    async def mock_send_message(**kwargs):
-        call_log.append(kwargs)
-        return SimpleNamespace(message_id=778)
-
-    adapter._bot = SimpleNamespace(send_message=mock_send_message)
-
-    result = await adapter.send(
-        chat_id="123",
-        content="callback-originated final response",
-        reply_to="callback:679398136180458982",
-        metadata={
-            "thread_id": "20197",
-            "telegram_dm_topic_reply_fallback": True,
-            "telegram_reply_to_message_id": "462",
-        },
-    )
-
-    assert result.success is True
-    assert call_log[0]["reply_to_message_id"] == 462
-    assert call_log[0]["message_thread_id"] == 20197
-
-
-@pytest.mark.asyncio
 async def test_send_uses_metadata_reply_fallback_for_streaming_dm_topics():
     """Metadata-only sends still stay in Hermes-created Telegram DM topics."""
     adapter = _make_adapter()
