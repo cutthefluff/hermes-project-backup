@@ -826,6 +826,28 @@ class GatewaySlashCommandsMixin:
             logger.debug("Failed to write restart dedup marker: %s", e)
 
         active_agents = self._running_agent_count()
+        acknowledgement = (
+            t("gateway.draining", count=active_agents)
+            if active_agents
+            else t("gateway.restart.restarting")
+        )
+        acknowledged = False
+        try:
+            adapter = (
+                self.adapters.get(event.source.platform)
+                if event.source is not None and event.source.platform is not None
+                else None
+            )
+            if adapter is not None:
+                metadata = dict(self._thread_metadata_for_source(event.source) or {})
+                metadata.update({"notify": True, "_allow_degraded_send": True})
+                result = await adapter.send(
+                    str(event.source.chat_id), acknowledgement, metadata=metadata
+                )
+                acknowledged = result is None or getattr(result, "success", True)
+        except Exception:
+            logger.warning("Restart acknowledgement send failed", exc_info=True)
+
         # When running under a service manager (systemd/launchd) or inside a
         # Docker/Podman container, use the service restart path: exit with
         # code 75 so the service manager / container restart policy restarts
@@ -845,9 +867,11 @@ class GatewaySlashCommandsMixin:
             self.request_restart(detached=False, via_service=True)
         else:
             self.request_restart(detached=True, via_service=False)
+        if acknowledged:
+            return ""
         if active_agents:
-            return t("gateway.draining", count=active_agents)
-        return EphemeralReply(t("gateway.restart.restarting"))
+            return acknowledgement
+        return EphemeralReply(acknowledgement)
 
     async def _handle_version_command(self, event: MessageEvent) -> str:
         """Handle /version — show the running Hermes Agent version."""

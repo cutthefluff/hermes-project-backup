@@ -65,7 +65,8 @@ async def test_restart_command_writes_notify_file(tmp_path, monkeypatch):
     )
 
     result = await runner._handle_restart_command(event)
-    assert "Restarting" in result
+    assert result == ""
+    assert "Restarting gateway" in _adapter.sent[0]
 
     notify_path = tmp_path / ".restart_notify.json"
     assert notify_path.exists()
@@ -394,7 +395,10 @@ async def test_send_restart_notification_delivers_and_cleans_up(tmp_path, monkey
     call_args = adapter.send.call_args
     assert call_args[0][0] == "42"  # chat_id
     assert "restarted" in call_args[0][1].lower()
-    assert call_args[1].get("metadata") is None  # no thread
+    assert call_args[1]["metadata"] == {
+        "notify": True,
+        "_allow_degraded_send": True,
+    }
     assert not notify_path.exists()
 
 
@@ -424,6 +428,8 @@ async def test_send_restart_notification_with_thread(tmp_path, monkeypatch):
         "telegram_dm_topic_reply_fallback": True,
         "direct_messages_topic_id": "777",
         "telegram_reply_to_message_id": "m2",
+        "notify": True,
+        "_allow_degraded_send": True,
     }
     assert not notify_path.exists()
 

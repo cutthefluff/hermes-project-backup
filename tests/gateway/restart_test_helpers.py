@@ -92,6 +92,9 @@ def make_restart_runner(
     runner._handle_restart_command = GatewayRunner._handle_restart_command.__get__(
         runner, GatewayRunner
     )
+    runner._thread_metadata_for_source = GatewayRunner._thread_metadata_for_source.__get__(
+        runner, GatewayRunner
+    )
     runner._handle_set_home_command = GatewayRunner._handle_set_home_command.__get__(
         runner, GatewayRunner
     )
