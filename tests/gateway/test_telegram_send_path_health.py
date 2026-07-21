@@ -65,18 +65,6 @@ async def test_send_short_circuits_when_path_degraded():
 
 
 @pytest.mark.asyncio
-async def test_restart_lifecycle_send_bypasses_degraded_guard():
-    """A restart notice may use the still-connected Bot API before polling confirms progress."""
-    adapter = _make_adapter()
-    adapter._send_path_degraded = True
-
-    result = await adapter.send("123", "Restarting gateway", metadata={"_allow_degraded_send": True})
-
-    assert result.success is True
-    adapter._bot.send_message.assert_awaited()
-
-
-@pytest.mark.asyncio
 async def test_reconnect_storm_sets_and_heartbeat_clears_flag(monkeypatch):
     """_handle_polling_network_error sets the flag; a successful heartbeat
     probe in _verify_polling_after_reconnect clears it."""

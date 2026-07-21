@@ -1863,7 +1863,7 @@ class TelegramAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="Not connected")
 
         # getattr() — tests build adapters via object.__new__() (no __init__).
-        if getattr(self, "_send_path_degraded", False) and not (metadata or {}).get("_allow_degraded_send"):
+        if getattr(self, "_send_path_degraded", False):
             return SendResult(success=False, error="send_path_degraded", retryable=True)
 
         # Skip whitespace-only text to prevent Telegram 400 empty-text errors.
